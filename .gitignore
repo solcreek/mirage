@@ -17,3 +17,6 @@ poc/switchbench/switchbench
 
 # Built binaries
 bin/
+
+# Local Claude Code runtime state
+.claude/
