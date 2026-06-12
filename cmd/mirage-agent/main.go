@@ -19,49 +19,52 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// captureScreen grabs the main display as PNG via the screencapture CLI. This
-// only yields a non-black image when run in a logged-in GUI session with Screen
-// Recording (TCC) permission — hence it must run from the user LaunchAgent.
+// captureScreen grabs the main display as PNG. screencapture only sees the
+// display when it runs inside the logged-in GUI (Aqua) session, so the root
+// daemon launches it via `launchctl asuser <console-uid>`. TCC attributes the
+// capture to the responsible process (mirage-agent), which must hold the
+// ScreenCapture grant (seeded in the golden image).
 func captureScreen() ([]byte, error) {
-	out := "/tmp/.mirage-shot.png"
-	_ = os.Remove(out)
-	combined, err := exec.Command("/usr/sbin/screencapture", "-x", "-t", "png", out).CombinedOutput()
+	uidBytes, err := exec.Command("stat", "-f", "%u", "/dev/console").Output()
+	uid := strings.TrimSpace(string(uidBytes))
+	if err != nil || uid == "" || uid == "0" {
+		return nil, fmt.Errorf("no GUI login session (console uid=%q) — enable auto-login", uid)
+	}
+	// Unique path per capture: a fixed path leaves a stale file that /tmp's
+	// sticky bit can make unwritable on the next capture.
+	tmp, err := os.CreateTemp("", "mirage-shot-*.png")
+	if err != nil {
+		return nil, err
+	}
+	out := tmp.Name()
+	tmp.Close()
+	_ = os.Remove(out) // let screencapture create it fresh
+	defer os.Remove(out)
+	combined, err := exec.Command("launchctl", "asuser", uid,
+		"/usr/sbin/screencapture", "-x", "-t", "png", out).CombinedOutput()
 	msg := strings.TrimSpace(string(combined))
 	if err != nil {
 		return nil, fmt.Errorf("screencapture failed: %v (%s)", err, msg)
 	}
 	info, statErr := os.Stat(out)
 	if statErr != nil || info.Size() == 0 {
-		// screencapture can exit 0 yet write nothing when Screen Recording is
-		// not granted to this process.
-		return nil, fmt.Errorf("screencapture produced no image — Screen Recording (TCC) not granted to the agent; output=%q", msg)
+		return nil, fmt.Errorf("screencapture produced no image — Screen Recording (TCC) not granted to mirage-agent; output=%q", msg)
 	}
 	defer os.Remove(out)
 	return os.ReadFile(out)
 }
 
-const (
-	agentPort = 4444 // root LaunchDaemon: exec, ping
-	guiPort   = 4445 // user LaunchAgent (GUI session): screenshot
-)
+const agentPort = 4444 // root LaunchDaemon: exec, ping, screenshot
 
 func main() {
-	port := uint32(agentPort)
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "setup-autologin":
-			if err := setupAutologin(os.Args[2:]); err != nil {
-				fmt.Fprintln(os.Stderr, "mirage-agent:", err)
-				os.Exit(1)
-			}
-			return
-		case "serve-gui":
-			// Runs in the logged-in user's GUI session (LaunchAgent) so
-			// screencapture has a display + the session's TCC grants.
-			port = guiPort
+	if len(os.Args) > 1 && os.Args[1] == "setup-autologin" {
+		if err := setupAutologin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "mirage-agent:", err)
+			os.Exit(1)
 		}
+		return
 	}
-	if err := serve(port); err != nil {
+	if err := serve(agentPort); err != nil {
 		fmt.Fprintln(os.Stderr, "mirage-agent:", err)
 		os.Exit(1)
 	}

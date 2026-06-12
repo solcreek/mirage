@@ -10,12 +10,9 @@ import (
 	"github.com/Code-Hex/vz/v3"
 )
 
-// AgentPort is the guest vsock port the root agent binds (exec/ping). GUIPort
-// is the user-session LaunchAgent (screenshot).
-const (
-	AgentPort = 4444
-	GUIPort   = 4445
-)
+// AgentPort is the guest vsock port the root agent binds: exec, ping, and
+// screenshot (the agent runs screencapture via launchctl asuser).
+const AgentPort = 4444
 
 // ConnectGuest opens a host→guest vsock connection to the given port. The host
 // has no AF_VSOCK API; the connection is routed through the VM's
@@ -57,10 +54,10 @@ func AgentExec(vm *vz.VirtualMachine, command string, timeout time.Duration) (Ex
 	return res, nil
 }
 
-// AgentScreenshot asks the guest's GUI-session agent (GUIPort) for a PNG of the
-// main display and returns the decoded image bytes.
+// AgentScreenshot asks the guest agent for a PNG of the main display and
+// returns the decoded image bytes.
 func AgentScreenshot(vm *vz.VirtualMachine, timeout time.Duration) ([]byte, error) {
-	conn, err := DialGuest(vm, GUIPort, timeout)
+	conn, err := DialGuest(vm, AgentPort, timeout)
 	if err != nil {
 		return nil, err
 	}
