@@ -9,6 +9,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,17 +19,40 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const agentPort = 4444
+// captureScreen grabs the main display as PNG via the screencapture CLI. This
+// only yields a non-black image when run in a logged-in GUI session with Screen
+// Recording (TCC) permission — hence it must run from the user LaunchAgent.
+func captureScreen() ([]byte, error) {
+	out := "/tmp/.mirage-shot.png"
+	if b, err := exec.Command("/usr/sbin/screencapture", "-x", "-t", "png", out).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("screencapture: %v: %s", err, b)
+	}
+	defer os.Remove(out)
+	return os.ReadFile(out)
+}
+
+const (
+	agentPort = 4444 // root LaunchDaemon: exec, ping
+	guiPort   = 4445 // user LaunchAgent (GUI session): screenshot
+)
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "setup-autologin" {
-		if err := setupAutologin(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "mirage-agent:", err)
-			os.Exit(1)
+	port := uint32(agentPort)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "setup-autologin":
+			if err := setupAutologin(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "mirage-agent:", err)
+				os.Exit(1)
+			}
+			return
+		case "serve-gui":
+			// Runs in the logged-in user's GUI session (LaunchAgent) so
+			// screencapture has a display + the session's TCC grants.
+			port = guiPort
 		}
-		return
 	}
-	if err := serve(agentPort); err != nil {
+	if err := serve(port); err != nil {
 		fmt.Fprintln(os.Stderr, "mirage-agent:", err)
 		os.Exit(1)
 	}
@@ -74,6 +98,13 @@ func handle(fd int) {
 	case strings.HasPrefix(req, "exec "):
 		out, code := runShell(strings.TrimPrefix(req, "exec "))
 		writeJSON(conn, map[string]any{"ok": code == 0, "exit_code": code, "output": out})
+	case req == "screenshot":
+		png, err := captureScreen()
+		if err != nil {
+			writeJSON(conn, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(conn, map[string]any{"ok": true, "png_base64": base64.StdEncoding.EncodeToString(png)})
 	default:
 		writeJSON(conn, map[string]any{"ok": false, "error": "unknown request: " + req})
 	}

@@ -225,6 +225,28 @@ func cmdRun(args []string) (any, error) {
 	return map[string]any{"ephemeral": name, "exit_code": exit, "output": out}, nil
 }
 
+func cmdScreenshot(args []string) (any, error) {
+	fs := flag.NewFlagSet("screenshot", flag.ContinueOnError)
+	out := fs.String("o", "", "output PNG path (default: <name>.png)")
+	pos, err := parseMixed(fs, args)
+	if err != nil || len(pos) != 1 {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage screenshot <name> [-o out.png]")
+	}
+	name := pos[0]
+	png, err := coreScreenshot(name)
+	if err != nil {
+		return nil, err
+	}
+	path := *out
+	if path == "" {
+		path = name + ".png"
+	}
+	if err := os.WriteFile(path, png, 0o644); err != nil {
+		return nil, err
+	}
+	return map[string]any{"name": name, "path": path, "bytes": len(png)}, nil
+}
+
 func cmdRm(args []string) (any, error) {
 	if len(args) != 1 {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage rm <name>")

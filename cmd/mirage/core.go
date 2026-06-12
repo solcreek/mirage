@@ -106,6 +106,16 @@ func coreList() ([]lsRow, error) {
 	return rows, nil
 }
 
+// coreScreenshot returns a PNG of a running VM's display. Screenshot needs the
+// GUI session, so the VM must be started (a running supervisor).
+func coreScreenshot(name string) ([]byte, error) {
+	if !supervisor.IsRunning(name) {
+		return nil, miragerr.New(miragerr.SlugInvalidState, name+" is not running").
+			WithHint("start it first: mirage start " + name)
+	}
+	return supervisor.Screenshot(name)
+}
+
 // coreClone makes an instant CoW clone of an image/VM with a fresh identity.
 func coreClone(srcName, dstName string) (mac string, err error) {
 	src, _, ok := bundle.Find(srcName)

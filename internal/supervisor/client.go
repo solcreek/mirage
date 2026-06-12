@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -62,6 +63,18 @@ func Stop(name string) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("supervisor did not exit in time")
+}
+
+// Screenshot asks a running VM's supervisor for a PNG of the guest display.
+func Screenshot(name string) ([]byte, error) {
+	resp, err := request(name, Request{Op: OpScreenshot}, 90*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	return base64.StdEncoding.DecodeString(resp.PNGBase64)
 }
 
 // Ping checks that a supervisor is responsive.

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -9,8 +10,12 @@ import (
 	"github.com/Code-Hex/vz/v3"
 )
 
-// AgentPort is the guest vsock port the agent's root listener binds.
-const AgentPort = 4444
+// AgentPort is the guest vsock port the root agent binds (exec/ping). GUIPort
+// is the user-session LaunchAgent (screenshot).
+const (
+	AgentPort = 4444
+	GUIPort   = 4445
+)
 
 // ConnectGuest opens a host→guest vsock connection to the given port. The host
 // has no AF_VSOCK API; the connection is routed through the VM's
@@ -50,6 +55,35 @@ func AgentExec(vm *vz.VirtualMachine, command string, timeout time.Duration) (Ex
 		return ExecResult{}, fmt.Errorf("bad agent reply %q: %w", line, err)
 	}
 	return res, nil
+}
+
+// AgentScreenshot asks the guest's GUI-session agent (GUIPort) for a PNG of the
+// main display and returns the decoded image bytes.
+func AgentScreenshot(vm *vz.VirtualMachine, timeout time.Duration) ([]byte, error) {
+	conn, err := DialGuest(vm, GUIPort, timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("screenshot\n")); err != nil {
+		return nil, fmt.Errorf("write to gui agent: %w", err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("read from gui agent: %w", err)
+	}
+	var res struct {
+		OK     bool   `json:"ok"`
+		PNG    string `json:"png_base64"`
+		ErrMsg string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &res); err != nil {
+		return nil, fmt.Errorf("bad gui agent reply: %w", err)
+	}
+	if !res.OK {
+		return nil, fmt.Errorf("guest screenshot failed: %s", res.ErrMsg)
+	}
+	return base64.StdEncoding.DecodeString(res.PNG)
 }
 
 // DialGuest retries ConnectGuest until the guest agent is listening or the

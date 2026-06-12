@@ -97,6 +97,9 @@ type runOut struct {
 	ExitCode  int    `json:"exit_code"`
 	Output    string `json:"output"`
 }
+type screenshotOut struct {
+	Bytes int `json:"bytes"`
+}
 
 func timeoutOr(s int) time.Duration {
 	if s <= 0 {
@@ -187,6 +190,21 @@ func registerTools(s *mcp.Server) {
 			return nil, execOut{}, err
 		}
 		return ok(), execOut{ExitCode: exit, Output: out}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "vm_screenshot",
+		Description: "Capture the display of a running VM as a PNG image. The VM must be started (vm_start) first.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, screenshotOut, error) {
+		png, err := coreScreenshot(in.Name)
+		if err != nil {
+			return nil, screenshotOut{}, err
+		}
+		// Return the image as content so the model can see it; structured
+		// output carries just the byte size.
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
+		}, screenshotOut{Bytes: len(png)}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

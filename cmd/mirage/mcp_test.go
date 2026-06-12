@@ -49,7 +49,7 @@ func TestRegisterTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = true
 	}
-	for _, want := range []string{"vm_list", "vm_clone", "vm_start", "vm_stop", "vm_delete", "vm_exec", "vm_run"} {
+	for _, want := range []string{"vm_list", "vm_clone", "vm_start", "vm_stop", "vm_delete", "vm_exec", "vm_run", "vm_screenshot"} {
 		if !got[want] {
 			t.Errorf("tool %q not registered", want)
 		}

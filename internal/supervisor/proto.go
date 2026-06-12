@@ -4,10 +4,11 @@ package supervisor
 // Request, one Response, per connection.
 
 const (
-	OpExec = "exec"
-	OpPing = "ping"
-	OpStop = "stop"
-	OpInfo = "info"
+	OpExec       = "exec"
+	OpPing       = "ping"
+	OpStop       = "stop"
+	OpInfo       = "info"
+	OpScreenshot = "screenshot"
 )
 
 type Request struct {
@@ -17,9 +18,10 @@ type Request struct {
 }
 
 type Response struct {
-	OK       bool   `json:"ok"`
-	ExitCode int    `json:"exit_code,omitempty"`
-	Output   string `json:"output,omitempty"`
-	Error    string `json:"error,omitempty"`
-	State    *State `json:"state,omitempty"`
+	OK        bool   `json:"ok"`
+	ExitCode  int    `json:"exit_code,omitempty"`
+	Output    string `json:"output,omitempty"`
+	PNGBase64 string `json:"png_base64,omitempty"`
+	Error     string `json:"error,omitempty"`
+	State     *State `json:"state,omitempty"`
 }

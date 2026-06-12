@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -159,6 +160,13 @@ func (s *server) handle(conn net.Conn) {
 			return
 		}
 		writeResp(conn, Response{OK: true, ExitCode: res.ExitCode, Output: res.Output})
+	case OpScreenshot:
+		png, err := engine.AgentScreenshot(s.vm, time.Minute)
+		if err != nil {
+			writeResp(conn, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(conn, Response{OK: true, PNGBase64: base64.StdEncoding.EncodeToString(png)})
 	default:
 		writeResp(conn, Response{OK: false, Error: "unknown op: " + req.Op})
 	}

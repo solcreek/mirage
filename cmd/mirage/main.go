@@ -25,6 +25,7 @@ commands:
   clone <src> <dst>                            instant copy-on-write clone
   exec <name> -- <command...>                  run a command in the guest (headless)
   run <image> -- <command...>                  clone → run → destroy (ephemeral)
+  screenshot <name> [-o out.png]               capture the guest display (PNG)
   start <name> [--gui]                         boot a VM (headless, or windowed)
   stop <name>                                  stop a running VM
   logs <name>                                  print a VM's supervisor log
@@ -75,6 +76,8 @@ func main() {
 		code = ctx.run(cmdExec(cmdArgs))
 	case "run":
 		code = ctx.run(cmdRun(cmdArgs))
+	case "screenshot":
+		code = ctx.run(cmdScreenshot(cmdArgs))
 	case "start":
 		code = ctx.run(cmdStart(cmdArgs))
 	case "stop":
