@@ -14,3 +14,6 @@ DerivedData/
 # PoC working data and built binaries
 poc/.work/
 poc/switchbench/switchbench
+
+# Built binaries
+bin/
