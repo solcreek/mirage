@@ -23,3 +23,7 @@ bin/
 
 # stray root build output
 /mirage
+
+# Swift build artifacts
+app/.build/
+app/.swiftpm/
