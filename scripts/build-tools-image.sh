@@ -20,7 +20,7 @@ codesign -s - --force "${STAGE}/mirage-agent"
 
 cp "${ROOT}/guest/install.sh" "${STAGE}/install.sh"
 chmod +x "${STAGE}/install.sh"
-cp "${ROOT}/guest/launchd/com.solcreek.mirage-agent.plist" "${STAGE}/"
+cp "${ROOT}"/guest/launchd/*.plist "${STAGE}/"
 
 echo "creating raw image ${OUT}…"
 mkdir -p "$(dirname "$OUT")"
