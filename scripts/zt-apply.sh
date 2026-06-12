@@ -76,19 +76,16 @@ install -m 0644 -o 0 -g 0 "$STAGE/com.solcreek.mirage-agent.plist" "$MP/Library/
 
 echo "6. Screen Recording TCC grant"
 TCCDST="$MP/Library/Application Support/com.apple.TCC/TCC.db"
-if sqlite3 "$TCCDST" "SELECT 1 FROM access LIMIT 1;" >/dev/null 2>&1; then
-	# DB already initialized — insert the grant directly.
-	HEX=$(xxd -p "$STAGE/agent.csreq" | tr -d '\n'); NOW=$(date +%s)
-	sqlite3 "$TCCDST" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,csreq,flags,last_modified,last_reminded) VALUES ('kTCCServiceScreenCapture','/usr/local/bin/mirage-agent',1,2,4,1,X'$HEX',0,$NOW,$NOW);"
-	echo "   inserted grant into existing TCC.db"
-elif [ -f "$STAGE/TCC.db" ]; then
-	# Fresh install: no access table yet. Drop in base's real TCC.db (correct
-	# schema + a matching cert-pinned mirage-agent grant).
-	install -m 0644 -o 0 -g 0 "$STAGE/TCC.db" "$TCCDST"
-	echo "   installed base TCC.db (carries the matching grant)"
-else
-	echo "   WARNING: no access table and no staged TCC.db — screenshot will need a grant" >&2
+# A fresh, never-booted install has an empty TCC.db (tccd builds the schema on
+# first run). Initialize it from our captured macOS-26 schema (self-contained;
+# no dependency on a prepped 'base').
+if ! sqlite3 "$TCCDST" "SELECT 1 FROM access LIMIT 1;" >/dev/null 2>&1; then
+	sqlite3 "$TCCDST" < "$STAGE/tcc-schema.sql"
+	echo "   initialized empty TCC.db from schema (version 32)"
 fi
+HEX=$(xxd -p "$STAGE/agent.csreq" | tr -d '\n'); NOW=$(date +%s)
+sqlite3 "$TCCDST" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,csreq,flags,last_modified,last_reminded) VALUES ('kTCCServiceScreenCapture','/usr/local/bin/mirage-agent',1,2,4,1,X'$HEX',0,$NOW,$NOW);"
+echo "   seeded mirage-agent Screen Recording grant"
 
 echo "7. skip Setup Assistant"
 touch "$MP/private/var/db/.AppleSetupDone"
