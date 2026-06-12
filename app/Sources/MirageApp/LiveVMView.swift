@@ -41,6 +41,7 @@ struct LiveVMWindow: View {
             }
         }
         .onAppear { if case .idle = runner.status { runner.start() } }
+        .onDisappear { runner.teardown() }   // never let the VM outlive its window
         .frame(minWidth: 640, minHeight: 480)
     }
 

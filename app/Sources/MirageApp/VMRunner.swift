@@ -104,6 +104,18 @@ final class VMRunner: ObservableObject {
         }
     }
 
+    /// Called when the live window closes. The VM must not outlive its window —
+    /// otherwise the Virtualization helper keeps holding the disk/aux lock and
+    /// blocks every other use of the bundle. Force-stop guarantees the lock is
+    /// released immediately (an unclean guest power-off, which APFS tolerates);
+    /// the toolbar "Shut Down" remains the graceful path.
+    func teardown() {
+        guard let machine = vm, machine.canStop else { return }
+        machine.stop { _ in }
+        vm = nil
+        status = .stopped
+    }
+
     private var isFailed: Bool { if case .failed = status { return true }; return false }
     private func note(_ s: String?) {}
     private static func describe(_ e: Error) -> String {
