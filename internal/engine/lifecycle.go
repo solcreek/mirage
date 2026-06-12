@@ -5,12 +5,36 @@ import (
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
+	"github.com/solcreek/mirage/internal/bundle"
 )
 
 // WaitRunning blocks until the VM is running (keeps vz state types out of
 // callers that only need the common case).
 func WaitRunning(vm *vz.VirtualMachine, timeout time.Duration) error {
 	return WaitState(vm, vz.VirtualMachineStateRunning, timeout)
+}
+
+// StartFresh builds and boots a VM, retrying the start a few times because a
+// just-stopped sibling can still hold the disk image (vz Stop is async). It
+// returns once the VM is running.
+func StartFresh(b bundle.Bundle, c *bundle.Config, opts Options, attempts int) (*vz.VirtualMachine, error) {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		vm, err := BuildVM(b, c, opts)
+		if err != nil {
+			return nil, err
+		}
+		if err := vm.Start(); err != nil {
+			lastErr = err
+			time.Sleep(1500 * time.Millisecond)
+			continue
+		}
+		if err := WaitRunning(vm, 2*time.Minute); err != nil {
+			return nil, err
+		}
+		return vm, nil
+	}
+	return nil, lastErr
 }
 
 // WaitState blocks until the VM reaches want or the timeout elapses.

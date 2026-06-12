@@ -214,15 +214,13 @@ func cmdExec(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	vm, err := engine.BuildVM(b, cfg, engine.Options{})
+	// StartFresh retries briefly: a prior one-shot exec may still be releasing
+	// the disk image (vz Stop is async), which transiently fails Start. The
+	// per-VM supervisor will remove the boot-per-exec pattern entirely.
+	vm, err := engine.StartFresh(b, cfg, engine.Options{}, 5)
 	if err != nil {
-		return nil, err
-	}
-	if err := vm.Start(); err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").WithCause(err)
-	}
-	if err := engine.WaitRunning(vm, 2*time.Minute); err != nil {
-		return nil, err
+		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").
+			WithHint("another VM using this image may still be shutting down").WithCause(err)
 	}
 	defer func() { _ = vm.Stop() }()
 
