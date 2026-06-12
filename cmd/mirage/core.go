@@ -149,9 +149,12 @@ func coreAutologin(name, user, password string, timeout time.Duration) error {
 	// One shell command, run as root by the agent: decode kcpassword into place,
 	// lock it down, then point the login window at the user. base64 -D is BSD
 	// (the macOS guest's base64); printf %s avoids a trailing newline.
+	// `sync` is essential: coreExec cold-boots then force-stops the VM, so an
+	// unsynced write to /etc/kcpassword is lost on power-off (the file's metadata
+	// persists but its contents do not). Flush before returning.
 	cmd := fmt.Sprintf(
 		"printf %%s '%s' | base64 -D > /etc/kcpassword && chmod 600 /etc/kcpassword && "+
-			"defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string '%s'",
+			"defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string '%s' && sync",
 		enc, user)
 	code, out, err := coreExec(name, cmd, timeout)
 	if err != nil {
