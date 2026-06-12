@@ -11,7 +11,9 @@ IDENTITY="Mirage Agent Dev"
 KEYCHAIN="${HOME}/.local/share/mirage/mirage-codesign.keychain-db"
 KPASS="mirage-dev"
 
-if security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "$IDENTITY"; then
+# A self-signed cert is untrusted, so find-identity -p codesigning won't list it;
+# detect it by certificate instead (avoids creating duplicates).
+if security find-certificate -c "$IDENTITY" "$KEYCHAIN" >/dev/null 2>&1; then
 	echo "$IDENTITY"
 	exit 0
 fi
