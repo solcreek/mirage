@@ -18,11 +18,36 @@ The guest agent (`cmd/mirage-agent`) compiles to a Mach-O arm64 binary using
 `Code-Hex/vz` `VirtioSocketDevice.Connect(port)`, which returns a `net.Conn`.
 **The 2–3 day hand-rolled-syscall fallback is cancelled.**
 
-## Result (runtime): pending one manual guest-prep session
+## Result (runtime): PASS (2026-06-12)
 
-End-to-end runtime confirmation needs a guest session, which the freshly
-installed base image does not yet have (it stops at Setup Assistant). This is
-the one-time manual prep the plan already accounts for.
+Confirmed end to end on a macOS 26.3.1 guest. The host connected to the guest's
+AF_VSOCK listener via `VZVirtioSocketDevice.Connect(4444)`, sent `ping`, and the
+guest replied over vsock:
+
+```
+✅ host→guest vsock connection established
+✅ S1 PASSED — guest replied over vsock:
+   {"agent":"mirage-agent","guest":{"hostname":"Lawrences-Virtual-Machine.local","product_ver":"26.3.1"},"ok":true}
+```
+
+So the full transport works: Go-on-darwin AF_VSOCK listen + host
+`VZVirtioSocketDevice` connect + request/response round-trip. M1 can build the
+real agent on this transport.
+
+### Gotcha found and fixed
+
+`vz.StartGraphicApplication` **requires `runtime.LockOSThread()`** on the calling
+(main) goroutine; without it the graphics window crashes nondeterministically
+with SIGTRAP in `startVirtualMachineWindow` (works once, then fails after the
+goroutine migrates off the main OS thread). Fixed in `cmd/mirage` `init()`.
+
+### Notes for the real agent (M1)
+
+- `mount_virtiofs <tag> <dir>` mounts the VirtioFS share in the guest; binary
+  staged via the share runs fine (ad-hoc signed, not quarantined).
+- Setup Assistant is still a one-time manual step (no automation yet — see the
+  zero-touch-create goal). Once the account exists it persists on disk across
+  reboots; only the live session is lost on stop.
 
 ### Runbook
 
@@ -39,11 +64,12 @@ the one-time manual prep the plan already accounts for.
 3. In the guest window, complete Setup Assistant once (create a user). Then open
    Terminal and run:
    ```
-   mkdir -p /tmp/m && mount_virtiofs mirage /tmp/m
+   sudo mkdir -p /tmp/m && sudo mount_virtiofs mirage /tmp/m
    /tmp/m/mirage-agent
    ```
-4. The host prints `✅ S1 PASSED — guest replied: {...}` once the agent listens.
+4. The host prints `✅ S1 PASSED — guest replied: {...}` once the agent listens
+   (also written to `/tmp/mirage-s1-result.txt`).
 
-Close the window to stop the VM. The result feeds the M1 decision: on PASS, the
-real agent is built on this transport; the seeded golden image will launch it as
-a LaunchDaemon so no manual step remains.
+Close the window to stop the VM. On PASS (now confirmed), the real agent is built
+on this transport; the seeded golden image will launch it as a LaunchDaemon so no
+manual step remains.
