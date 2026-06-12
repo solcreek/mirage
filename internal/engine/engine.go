@@ -30,7 +30,10 @@ func NewIdentity() (bundle.Identity, error) {
 // BuildVM constructs a runnable VirtualMachine from a macOS bundle. The
 // configuration must be byte-identical across boots of the same bundle or
 // restore-from-save fails, so everything variable lives in config.json.
-func BuildVM(b bundle.Bundle, c *bundle.Config) (*vz.VirtualMachine, error) {
+//
+// share, if non-empty, is a host directory exposed to the guest over VirtioFS
+// under the mount tag "mirage" (used during image prep to stage files in).
+func BuildVM(b bundle.Bundle, c *bundle.Config, share string) (*vz.VirtualMachine, error) {
 	if c.OS != "macos" {
 		return nil, miragerr.New(miragerr.SlugInvalidState, "engine v0.1 supports macOS guests only")
 	}
@@ -116,6 +119,32 @@ func BuildVM(b bundle.Bundle, c *bundle.Config) (*vz.VirtualMachine, error) {
 		return nil, err
 	}
 	cfg.SetPointingDevicesVirtualMachineConfiguration([]vz.PointingDeviceConfiguration{pad})
+
+	// Virtio socket device: the host↔guest control channel the agent uses.
+	sockDev, err := vz.NewVirtioSocketDeviceConfiguration()
+	if err != nil {
+		return nil, err
+	}
+	cfg.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{sockDev})
+
+	// Optional VirtioFS share (mount tag "mirage") — used to stage the agent
+	// binary into a guest during image prep before the agent itself exists.
+	if share != "" {
+		dir, err := vz.NewSharedDirectory(share, false)
+		if err != nil {
+			return nil, err
+		}
+		single, err := vz.NewSingleDirectoryShare(dir)
+		if err != nil {
+			return nil, err
+		}
+		fsDev, err := vz.NewVirtioFileSystemDeviceConfiguration("mirage")
+		if err != nil {
+			return nil, err
+		}
+		fsDev.SetDirectoryShare(single)
+		cfg.SetDirectorySharingDevicesVirtualMachineConfiguration([]vz.DirectorySharingDeviceConfiguration{fsDev})
+	}
 
 	if ok, err := cfg.Validate(); !ok || err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "VM configuration is invalid").WithCause(err)
