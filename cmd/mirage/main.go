@@ -53,6 +53,8 @@ func main() {
 		code = ctx.run(cmdStart(cmdArgs))
 	case "rm":
 		code = ctx.run(cmdRm(cmdArgs))
+	case "__vsock-probe":
+		code = ctx.run(cmdVsockProbe(cmdArgs))
 	case "version":
 		code = ctx.run(map[string]string{"version": version}, nil)
 	case "help", "-h", "--help":

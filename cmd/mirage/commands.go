@@ -126,11 +126,12 @@ func cmdClone(args []string) (any, error) {
 func cmdStart(args []string) (any, error) {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	gui := fs.Bool("gui", false, "open an interactive window (foreground)")
+	share := fs.String("share", "", "host directory to expose to the guest over VirtioFS (tag \"mirage\")")
 	if err := fs.Parse(args); err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
 	if fs.NArg() != 1 {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> --gui")
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> --gui [--share <dir>]")
 	}
 	name := fs.Arg(0)
 	b, _, ok := bundle.Find(name)
@@ -146,7 +147,7 @@ func cmdStart(args []string) (any, error) {
 			"headless start needs the per-VM supervisor (not in this build); use --gui").
 			WithHint("headless `mirage start` lands with the supervisor milestone")
 	}
-	vm, err := engine.BuildVM(b, cfg)
+	vm, err := engine.BuildVM(b, cfg, *share)
 	if err != nil {
 		return nil, err
 	}
