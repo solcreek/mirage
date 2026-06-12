@@ -9,3 +9,8 @@ DerivedData/
 *.ipsw
 *.img
 *.bundle/
+*.vzsave
+
+# PoC working data and built binaries
+poc/.work/
+poc/switchbench/switchbench
