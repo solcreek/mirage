@@ -403,6 +403,7 @@ func cmdBench(args []string) error {
 	workdir := fs.String("workdir", "", "directory for clones + save files")
 	cycles := fs.Int("cycles", 3, "number of A<->B switch cycles")
 	settle := fs.Duration("settle", 60*time.Second, "settle time after first cold boot")
+	skipSuspend := fs.Bool("skip-suspend", false, "measure clone + cold boot + concurrent/quota only (no save files, no disk cost)")
 	fs.Parse(args)
 	if *base == "" || *workdir == "" {
 		return fmt.Errorf("bench: --base and --workdir are required")
@@ -437,6 +438,55 @@ func cmdBench(args []string) error {
 			return fmt.Errorf("clone %s: %w", name, err)
 		}
 		rec("clone", name, d)
+	}
+
+	// skip-suspend: measure cold boot + concurrent boot + quota, no save files.
+	if *skipSuspend {
+		var running []*vz.VirtualMachine
+		for _, name := range []string{"A", "B"} {
+			vm, err := buildVM(vms[name])
+			if err != nil {
+				return fmt.Errorf("build %s: %w", name, err)
+			}
+			t0 := time.Now()
+			if err := vm.Start(); err != nil {
+				return fmt.Errorf("start %s: %w", name, err)
+			}
+			if err := waitState(vm, vz.VirtualMachineStateRunning, 2*time.Minute); err != nil {
+				return fmt.Errorf("boot %s: %w", name, err)
+			}
+			rec("cold_boot_to_running", name, time.Since(t0))
+			running = append(running, vm)
+		}
+		logf("both clones running concurrently: %d VMs", len(running))
+
+		// Third macOS VM must hit the kernel quota.
+		third := filepath.Join(*workdir, "vmC")
+		if _, err := os.Stat(third); err != nil {
+			if _, err := cloneBundle(*base, third); err != nil {
+				return fmt.Errorf("clone C: %w", err)
+			}
+		}
+		vmC, err := buildVM(third)
+		if err != nil {
+			return fmt.Errorf("build C: %w", err)
+		}
+		if err := vmC.Start(); err == nil {
+			_ = waitState(vmC, vz.VirtualMachineStateRunning, 10*time.Second)
+			logf("UNEXPECTED: third macOS VM started (state=%v) — quota not enforced?", vmC.State())
+			_ = vmC.Stop()
+		} else {
+			logf("third macOS VM correctly refused: %v", err)
+		}
+
+		for i, vm := range running {
+			_ = vm.Stop()
+			_ = waitState(vm, vz.VirtualMachineStateStopped, 30*time.Second)
+			logf("stopped VM %d", i)
+		}
+		fmt.Println()
+		summarize(rep)
+		return nil
 	}
 
 	// 2. Cold boot each, settle, suspend.
