@@ -157,6 +157,12 @@ func cmdStart(args []string) (any, error) {
 		}
 		return map[string]any{"name": name, "status": status, "pid": pid}, nil
 	}
+	// A GUI/recovery boot needs exclusive access to the disk; a running
+	// supervisor holds it (otherwise vz fails cryptically locking aux storage).
+	if supervisor.IsRunning(name) {
+		return nil, miragerr.New(miragerr.SlugConflict, name+" is already running headless").
+			WithHint("stop it first: mirage stop " + name)
+	}
 	vm, err := engine.BuildVM(b, cfg, engine.Options{Share: *share, ToolsImage: *tools})
 	if err != nil {
 		return nil, err

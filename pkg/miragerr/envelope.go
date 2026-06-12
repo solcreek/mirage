@@ -63,6 +63,9 @@ func FprintErr(w io.Writer, err error) int {
 		return ExitGeneric
 	}
 	fmt.Fprintf(w, "mirage: %s: %s\n", me.Slug, me.Message)
+	if me.wrapped != nil {
+		fmt.Fprintf(w, "  cause: %s\n", me.wrapped.Error())
+	}
 	if me.Hint != "" {
 		fmt.Fprintf(w, "  hint: %s\n", me.Hint)
 	}
