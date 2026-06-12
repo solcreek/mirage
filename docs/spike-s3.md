@@ -47,6 +47,21 @@ Record the outcome here. If a grant is needed, the next step is to decide
 between a one-time manual grant in the golden image (clone-inherits) vs.
 automated TCC.db seeding via SIP-off recovery boot.
 
-## Result
+## Result (2026-06-12): TCC Screen Recording IS required
 
-_pending first run_
+First run returned: `screencapture: exit status 1: could not create image from
+display`. The whole path works — the GUI LaunchAgent runs in the auto-login
+session on :4445, the host reaches it, `screencapture` executes — but macOS
+denies the capture because the calling process lacks **Screen Recording (TCC)**
+permission. This is the expected macOS-26 behavior; there is no interactive
+prompt in an automated/headless context, so it just fails.
+
+So a grant is needed. The agent is a bare CLI binary (`/usr/local/bin/mirage-agent`),
+not a `.app`, which is awkward to grant via System Settings — pointing to the
+real solution: **seed the system TCC.db** (`/Library/Application Support/com.apple.TCC/TCC.db`)
+with a `kTCCServiceScreenCapture` row for the agent, done once during golden-image
+prep via a SIP-off recovery boot. Clones then inherit the grant.
+
+Open: csreq/signature matching for the row, and macOS-26 TCC.db schema. Next
+step is `seed-tcc.sh` + the recovery-boot flow (decide vs. a manual one-time
+grant fallback).
