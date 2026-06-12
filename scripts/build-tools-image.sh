@@ -16,7 +16,20 @@ trap 'rm -rf "$STAGE"' EXIT
 
 echo "building guest agent (darwin/arm64)…"
 GOOS=darwin GOARCH=arm64 go build -o "${STAGE}/mirage-agent" "${ROOT}/cmd/mirage-agent"
-codesign -s - --force "${STAGE}/mirage-agent"
+
+# Sign with a stable self-signed identity so the agent's designated requirement
+# (and the TCC Screen Recording grant seeded from it) survives rebuilds. Fall
+# back to ad-hoc if the identity can't be created.
+KEYCHAIN="${HOME}/.local/share/mirage/mirage-codesign.keychain-db"
+if ID="$(sh "${ROOT}/scripts/dev-agent-cert.sh" 2>/dev/null)" && [ -n "$ID" ]; then
+	security unlock-keychain -p mirage-dev "$KEYCHAIN" 2>/dev/null || true
+	codesign -s "$ID" --keychain "$KEYCHAIN" --identifier com.solcreek.mirage-agent \
+		--force "${STAGE}/mirage-agent"
+	echo "signed agent with stable identity '$ID'"
+else
+	codesign -s - --force "${STAGE}/mirage-agent"
+	echo "WARNING: signed agent ad-hoc (TCC grant will need re-seeding per rebuild)"
+fi
 
 cp "${ROOT}/guest/install.sh" "${STAGE}/install.sh"
 cp "${ROOT}/guest/seed-tcc.sh" "${STAGE}/seed-tcc.sh"

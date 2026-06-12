@@ -26,11 +26,16 @@ if csrutil status 2>/dev/null | grep -qi enabled; then
 	exit 1
 fi
 
-# Build a csreq pinned to the agent's 20-byte cdhash (ad-hoc has no usable
-# designated requirement, so we pin the hash directly).
-CDH=$(codesign -dvvv "$AGENT" 2>&1 | sed -n 's/^CDHash=//p')
-[ -n "$CDH" ] || { echo "could not read agent cdhash" >&2; exit 1; }
-printf 'cdhash H"%s"' "$CDH" | csreq -r- -b /tmp/.agent.csreq
+# Prefer the agent's designated requirement (stable across rebuilds when signed
+# with the dev identity); fall back to a cdhash pin for ad-hoc builds.
+REQ=$(codesign -d -r- "$AGENT" 2>&1 | sed -n 's/^designated => //p')
+if [ -n "$REQ" ]; then
+	printf '%s' "$REQ" | csreq -r- -b /tmp/.agent.csreq
+else
+	CDH=$(codesign -dvvv "$AGENT" 2>&1 | sed -n 's/^CDHash=//p')
+	[ -n "$CDH" ] || { echo "could not read agent signature" >&2; exit 1; }
+	printf 'cdhash H"%s"' "$CDH" | csreq -r- -b /tmp/.agent.csreq
+fi
 HEX=$(xxd -p /tmp/.agent.csreq | tr -d '\n')
 rm -f /tmp/.agent.csreq
 
