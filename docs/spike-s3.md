@@ -104,8 +104,29 @@ TCC seeding must happen in a single `seed-tcc.sh` pass right after `csrutil
 disable`, before sealing. A late update to a long-running image cannot modify
 TCC.db.
 
-### Durability follow-up
+### Durability — solved with a stable signing identity
 
-The agent is ad-hoc signed, so its cdhash changes on every rebuild and the seed
-must be re-run. A stable self-signed signing identity for the agent would make
-the grant survive rebuilds (and is needed before sealing a real golden image).
+`scripts/dev-agent-cert.sh` creates a self-signed code-signing identity; the
+build signs the agent with it (`--identifier com.solcreek.mirage-agent`), giving
+a stable designated requirement `identifier "com.solcreek.mirage-agent" and
+certificate leaf = H"…"`. `seed-tcc.sh` derives the TCC csreq from that, so the
+Screen Recording grant matches by **identifier+cert, not cdhash** — it survives
+agent rebuilds **and** clones (whose cdhash differs).
+
+### Verified end to end (2026-06-12)
+
+After a proper prep pass (`start base --gui --tools …` → `install.sh` →
+`seed-tcc.sh`, SIP off): `screenshot base` returns a real 1920×1080 PNG with
+**no consent dialog**; a fresh **clone** screenshots cleanly too (stable csreq
+matches its different cdhash); `exec`/`run` intact. Both deliverables confirmed.
+
+### Known follow-ups
+
+- **Screenshot needs the GUI (Aqua) session up**, which lags the root agent by
+  ~30 s after a fresh clone boot; `screenshot` right after `start` can fail with
+  "could not create image" until auto-login completes. `captureScreen` should
+  wait/retry for a console user. (Because the grant is cert-pinned, this agent
+  fix can ship without re-seeding.)
+- **Enforced sealing** (read-only golden image, clone-only, with a clear error
+  on direct boot) is a v0.2 item — read-only breaks direct `start`/`exec` with a
+  cryptic vz error today, so v0.1 keeps "sealed by convention".
