@@ -84,7 +84,7 @@ func Install(ctx context.Context, b bundle.Bundle, ipsw string, diskGB int64, pr
 		return nil, err
 	}
 
-	vm, err := BuildVM(b, cfg, "")
+	vm, err := BuildVM(b, cfg, Options{})
 	if err != nil {
 		return nil, err
 	}

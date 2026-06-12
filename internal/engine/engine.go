@@ -27,13 +27,21 @@ func NewIdentity() (bundle.Identity, error) {
 	return bundle.Identity{MachineID: mid.DataRepresentation(), MAC: mac.String()}, nil
 }
 
+// Options carries optional devices attached at build time.
+type Options struct {
+	// Share, if set, is a host directory exposed to the guest over VirtioFS
+	// under the mount tag "mirage".
+	Share string
+	// ToolsImage, if set, is a read-only disk image (the agent tools image)
+	// attached as a second block device; the guest auto-mounts it under
+	// /Volumes. Used to deliver and install the guest agent.
+	ToolsImage string
+}
+
 // BuildVM constructs a runnable VirtualMachine from a macOS bundle. The
 // configuration must be byte-identical across boots of the same bundle or
 // restore-from-save fails, so everything variable lives in config.json.
-//
-// share, if non-empty, is a host directory exposed to the guest over VirtioFS
-// under the mount tag "mirage" (used during image prep to stage files in).
-func BuildVM(b bundle.Bundle, c *bundle.Config, share string) (*vz.VirtualMachine, error) {
+func BuildVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualMachine, error) {
 	if c.OS != "macos" {
 		return nil, miragerr.New(miragerr.SlugInvalidState, "engine v0.1 supports macOS guests only")
 	}
@@ -107,7 +115,19 @@ func BuildVM(b bundle.Bundle, c *bundle.Config, share string) (*vz.VirtualMachin
 	if err != nil {
 		return nil, err
 	}
-	cfg.SetStorageDevicesVirtualMachineConfiguration([]vz.StorageDeviceConfiguration{blk})
+	storage := []vz.StorageDeviceConfiguration{blk}
+	if opts.ToolsImage != "" {
+		toolsAttach, err := vz.NewDiskImageStorageDeviceAttachment(opts.ToolsImage, true) // read-only
+		if err != nil {
+			return nil, err
+		}
+		toolsBlk, err := vz.NewVirtioBlockDeviceConfiguration(toolsAttach)
+		if err != nil {
+			return nil, err
+		}
+		storage = append(storage, toolsBlk)
+	}
+	cfg.SetStorageDevicesVirtualMachineConfiguration(storage)
 
 	kbd, err := vz.NewMacKeyboardConfiguration()
 	if err != nil {
@@ -129,8 +149,8 @@ func BuildVM(b bundle.Bundle, c *bundle.Config, share string) (*vz.VirtualMachin
 
 	// Optional VirtioFS share (mount tag "mirage") — used to stage the agent
 	// binary into a guest during image prep before the agent itself exists.
-	if share != "" {
-		dir, err := vz.NewSharedDirectory(share, false)
+	if opts.Share != "" {
+		dir, err := vz.NewSharedDirectory(opts.Share, false)
 		if err != nil {
 			return nil, err
 		}

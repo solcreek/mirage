@@ -7,6 +7,12 @@ import (
 	"github.com/Code-Hex/vz/v3"
 )
 
+// WaitRunning blocks until the VM is running (keeps vz state types out of
+// callers that only need the common case).
+func WaitRunning(vm *vz.VirtualMachine, timeout time.Duration) error {
+	return WaitState(vm, vz.VirtualMachineStateRunning, timeout)
+}
+
 // WaitState blocks until the VM reaches want or the timeout elapses.
 func WaitState(vm *vz.VirtualMachine, want vz.VirtualMachineState, timeout time.Duration) error {
 	if vm.State() == want {

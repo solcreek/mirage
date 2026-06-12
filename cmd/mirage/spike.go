@@ -37,7 +37,7 @@ func cmdVsockProbe(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	vm, err := engine.BuildVM(b, cfg, share)
+	vm, err := engine.BuildVM(b, cfg, engine.Options{Share: share})
 	if err != nil {
 		return nil, err
 	}
