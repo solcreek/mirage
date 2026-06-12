@@ -60,6 +60,7 @@ func cmdCreate(args []string) (any, error) {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
 	ipsw := fs.String("ipsw", "", "path to a macOS restore image (.ipsw)")
 	diskGB := fs.Int64("disk-gb", 40, "disk size in GB (sparse)")
+	headless := fs.Bool("headless", false, "after install, run zero-touch prep (offline user+agent+TCC; needs sudo)")
 	pos, err := parseMixed(fs, args)
 	if err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
@@ -89,10 +90,19 @@ func cmdCreate(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	out := map[string]any{
 		"name": name, "os": cfg.OS, "cpu": cfg.CPU, "memory_mb": cfg.MemoryMB,
 		"macos_build": info.Build, "path": b.Dir,
-	}, nil
+	}
+	if *headless {
+		// Zero-touch: offline-prep the just-installed image (admin user, agent,
+		// auto-login, TCC) so it boots ready with no Setup Assistant.
+		if err := runZeroTouchPrep(name); err != nil {
+			return nil, err
+		}
+		out["prepped"] = "headless"
+	}
+	return out, nil
 }
 
 // lsRow is one line of `mirage ls` output (package-level so the human renderer

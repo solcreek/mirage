@@ -50,3 +50,20 @@ kcpassword decoding to `mirage`, FileVault off, valid password) is correct.
   for GUI/screenshot images.
 
 Account on zero-touch images: `admin` / `mirage`.
+
+## Integrated into the CLI
+
+- `mirage create <name> --ipsw <path> --headless` — installs, then runs the
+  offline prep automatically (prompts once for sudo). One command → ready
+  headless golden image.
+- `mirage prep <name>` — runs the prep on an already-installed image.
+- TCC seeding is **self-contained**: a fresh install's empty TCC.db is
+  initialized from `guest/tcc-schema.sql` (the captured macOS-26 schema, version
+  32) and the grant inserted — no dependency on a prepped `base`.
+- `zt-apply` retries the disk attach (the just-stopped installer VM can hold the
+  fd briefly), and remounts the image volume with `owners` so root ownership of
+  the agent/dslocal/TCC writes persists (the key pitfall).
+
+Open (v0.2): the prep shells out to `scripts/zt-*.sh` resolved relative to the
+binary; bundling them into the binary (or porting the offline writes to Go) so a
+shipped `mirage` is self-contained.

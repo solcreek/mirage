@@ -20,7 +20,8 @@ const usage = `mirage — ephemeral macOS VMs on Apple Silicon
 usage: mirage [--json] <command> [args]
 
 commands:
-  create <name> --ipsw <path> [--disk-gb 40]   install a macOS golden image
+  create <name> --ipsw <path> [--headless]     install a macOS golden image
+  prep <name>                                  zero-touch prep an installed image (sudo)
   ls                                           list images and VMs
   clone <src> <dst>                            instant copy-on-write clone
   exec <name> -- <command...>                  run a command in the guest (headless)
@@ -72,6 +73,8 @@ func main() {
 		code = ctx.run(cmdLs(cmdArgs))
 	case "clone":
 		code = ctx.run(cmdClone(cmdArgs))
+	case "prep":
+		code = ctx.run(cmdPrep(cmdArgs))
 	case "exec":
 		code = ctx.run(cmdExec(cmdArgs))
 	case "run":

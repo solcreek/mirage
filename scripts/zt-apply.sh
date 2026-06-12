@@ -19,7 +19,14 @@ DISK="${USERHOME}/.local/share/mirage/images/${NAME}.mirage/disk.img"
 [ -f "$STAGE/admin.plist" ] || { echo "run scripts/zt-stage.sh first" >&2; exit 1; }
 
 echo "attaching $DISK …"
-ATTACH=$(hdiutil attach -nomount "$DISK")
+# Retry: right after `mirage create`, the just-stopped installer VM may still
+# hold the disk fd briefly (released on GC), making attach fail with "in use".
+ATTACH=""
+for i in 1 2 3 4 5 6; do
+	if ATTACH=$(hdiutil attach -nomount "$DISK" 2>&1); then break; fi
+	echo "  disk busy, retrying ($i)…"; sleep 2
+done
+echo "$ATTACH" | grep -q GUID_partition || { echo "could not attach $DISK: $ATTACH" >&2; exit 1; }
 TOP=$(echo "$ATTACH" | grep GUID_partition | awk '{print $1}' | head -1)
 DATA=""
 cleanup() { [ -n "$DATA" ] && diskutil unmount force "$DATA" >/dev/null 2>&1 || true; hdiutil detach "$TOP" >/dev/null 2>&1 || true; }
