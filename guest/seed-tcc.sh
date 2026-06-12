@@ -34,11 +34,17 @@ printf 'cdhash H"%s"' "$CDH" | csreq -r- -b /tmp/.agent.csreq
 HEX=$(xxd -p /tmp/.agent.csreq | tr -d '\n')
 rm -f /tmp/.agent.csreq
 
+# auth_reason=4 + last_reminded=now mirror a real user "Allow": without them
+# macOS shows its periodic screen-recording reminder ("bypass the private window
+# picker / directly access your screen") on top of the grant. NOTE: the
+# com.apple.TCC directory is only writable in this prep window (SIP off, before
+# tccd re-locks it this boot) — do ALL TCC seeding in one pass here.
+NOW="strftime('%s','now')"
 sqlite3 "$DB" "INSERT OR REPLACE INTO access
-  (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified)
-  VALUES ('$SERVICE', '$AGENT', 1, 2, 2, 1, X'$HEX', 0, strftime('%s','now'));"
+  (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified, last_reminded)
+  VALUES ('$SERVICE', '$AGENT', 1, 2, 4, 1, X'$HEX', 0, $NOW, $NOW);"
 
 echo "granted $SERVICE to $AGENT (cdhash $CDH):"
-sqlite3 "$DB" "SELECT service, client, auth_value FROM access WHERE service='$SERVICE' AND client='$AGENT';"
+sqlite3 "$DB" "SELECT service, client, auth_value, auth_reason FROM access WHERE service='$SERVICE' AND client='$AGENT';"
 killall tccd 2>/dev/null || true
-echo "done — screenshot should work after a reboot."
+echo "done — screenshot works with no consent dialog after a reboot."

@@ -85,15 +85,24 @@ The working recipe, validated end to end (captured a real 1920×1080 desktop PNG
 Architecture change: screenshot is served by the root daemon on **:4444**; the
 separate GUI LaunchAgent (:4445) was removed.
 
-### Known remaining wrinkle (macOS 26)
+### The consent dialog — cracked
 
-After seeding, the first capture still triggered a one-time consent dialog —
-"mirage-agent is requesting to bypass the system private window picker and
-directly access your screen" — and the capture *succeeded* (the dialog was
-in the shot). macOS 15+/26 adds this periodic "direct screen access" consent on
-top of the TCC grant (SCContentSharingPicker). For fully-unattended *recurring*
-capture this needs suppressing too (likely an additional TCC/preference key);
-tracked as follow-up. Single captures work today.
+The "bypass the private window picker / directly access your screen" dialog is
+macOS's **periodic screen-recording reminder**, and it is stored on the *same*
+`kTCCServiceScreenCapture` row, not a separate store. Found by before/after diff
+of a real "Allow": clicking Allow writes the row with **`auth_reason=4`** and
+**`last_reminded=<now>`**. Our seed used `auth_reason=2` + `last_reminded=0`, so
+macOS still showed the reminder even though `auth_value=2` let the capture
+through. Fix (in `seed-tcc.sh`): seed the row with `auth_reason=4` and
+`last_reminded=strftime('%s','now')` — mirrors a real Allow, no dialog.
+
+**Write-window constraint (important):** the `com.apple.TCC` directory is only
+writable during the prep window — SIP off **and** before `tccd` re-locks the dir
+this boot. Once `tccd` has claimed it, even root gets `Permission denied` /
+sqlite `readonly` (booting out `tccd` is also "Operation not permitted"). So ALL
+TCC seeding must happen in a single `seed-tcc.sh` pass right after `csrutil
+disable`, before sealing. A late update to a long-running image cannot modify
+TCC.db.
 
 ### Durability follow-up
 
