@@ -17,6 +17,25 @@ import (
 
 const version = "0.1.0-dev"
 
+// parseMixed parses flags that may appear before, after, or interspersed with
+// positional arguments — Go's flag package stops at the first positional, so we
+// resume parsing after each one. Returns the collected positionals.
+func parseMixed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	rest := args
+	for len(rest) > 0 {
+		if err := fs.Parse(rest); err != nil {
+			return nil, err
+		}
+		rest = fs.Args()
+		if len(rest) > 0 {
+			positionals = append(positionals, rest[0])
+			rest = rest[1:]
+		}
+	}
+	return positionals, nil
+}
+
 // cmdContext carries global flags and renders the result envelope.
 type cmdContext struct {
 	json bool
@@ -42,16 +61,17 @@ func cmdCreate(args []string) (any, error) {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
 	ipsw := fs.String("ipsw", "", "path to a macOS restore image (.ipsw)")
 	diskGB := fs.Int64("disk-gb", 40, "disk size in GB (sparse)")
-	if err := fs.Parse(args); err != nil {
+	pos, err := parseMixed(fs, args)
+	if err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage create <name> --ipsw <path>")
 	}
 	if *ipsw == "" {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "--ipsw is required")
 	}
-	name := fs.Arg(0)
+	name := pos[0]
 	b := bundle.Resolve(bundle.Image, name)
 	if _, err := os.Stat(b.ConfigPath()); err == nil {
 		return nil, miragerr.New(miragerr.SlugConflict, "image "+name+" already exists")
@@ -132,13 +152,14 @@ func cmdStart(args []string) (any, error) {
 	gui := fs.Bool("gui", false, "open an interactive window (foreground)")
 	share := fs.String("share", "", "host directory to expose to the guest over VirtioFS (tag \"mirage\")")
 	tools := fs.String("tools", "", "attach a read-only tools image (auto-mounts in the guest)")
-	if err := fs.Parse(args); err != nil {
+	pos, err := parseMixed(fs, args)
+	if err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> --gui [--share <dir>] [--tools <img>]")
 	}
-	name := fs.Arg(0)
+	name := pos[0]
 	b, _, ok := bundle.Find(name)
 	if !ok {
 		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
