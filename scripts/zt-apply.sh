@@ -39,7 +39,11 @@ case "$cur" in /|/System/Volumes/Data) echo "REFUSING: $DATA looks like the host
 
 diskutil mount "$DATA" >/dev/null
 MP=$(diskutil info "$DATA" | awk -F': *' '/Mount Point/{print $2}')
-echo "mounted image Data volume ($DATA) at $MP"
+# Disk-image volumes mount with "ignore ownership" by default, which silently
+# discards the root ownership our writes need (launchd refuses non-root daemons;
+# opendirectoryd won't honor a non-root user record). Re-enable owners.
+mount -u -o owners "$MP"
+echo "mounted image Data volume ($DATA) at $MP (owners enabled)"
 
 DS="$MP/private/var/db/dslocal/nodes/Default"
 GUID=$(cat "$STAGE/generateduid")
@@ -88,5 +92,13 @@ fi
 
 echo "7. skip Setup Assistant"
 touch "$MP/private/var/db/.AppleSetupDone"
+
+# Verify the ownership-sensitive writes actually persisted as root.
+owner=$(stat -f%u "$MP/usr/local/bin/mirage-agent")
+if [ "$owner" != "0" ]; then
+	echo "ERROR: agent owner is uid $owner, not root — owners not honored on this mount; daemon won't load" >&2
+	exit 1
+fi
+echo "verified: agent + key files are root-owned"
 
 echo "done — detaching. Boot it: mirage start $NAME ; mirage exec $NAME -- whoami"
