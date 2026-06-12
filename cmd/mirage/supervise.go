@@ -29,21 +29,21 @@ func runVmm(args []string) {
 }
 
 // startHeadless spawns a detached supervisor for name and waits until it
-// reports running (or dies / times out).
-func startHeadless(name string) (any, error) {
+// reports running (or dies / times out). Returns the running status and PID.
+func startHeadless(name string) (status string, pid int, err error) {
 	if supervisor.IsRunning(name) {
-		return nil, miragerr.New(miragerr.SlugConflict, name+" is already running")
+		return "", 0, miragerr.New(miragerr.SlugConflict, name+" is already running")
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, err
+		return "", 0, err
 	}
 	if err := os.MkdirAll(filepath.Dir(supervisor.LogPath(name)), 0o700); err != nil {
-		return nil, err
+		return "", 0, err
 	}
 	logf, err := os.OpenFile(supervisor.LogPath(name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, err
+		return "", 0, err
 	}
 	defer logf.Close()
 
@@ -51,7 +51,7 @@ func startHeadless(name string) (any, error) {
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach into its own session
 	if err := cmd.Start(); err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "could not spawn supervisor").WithCause(err)
+		return "", 0, miragerr.New(miragerr.SlugHostEnv, "could not spawn supervisor").WithCause(err)
 	}
 
 	waitCh := make(chan error, 1)
@@ -65,18 +65,18 @@ func startHeadless(name string) (any, error) {
 			// Recover the typed reason the supervisor recorded (quota,
 			// boot failure, agent timeout); fall back to generic.
 			if reason := supervisor.ReadStartError(name); reason != nil {
-				return nil, reason
+				return "", 0, reason
 			}
-			return nil, miragerr.New(miragerr.SlugHostEnv,
+			return "", 0, miragerr.New(miragerr.SlugHostEnv,
 				"supervisor exited before the VM was ready").
 				WithHint("see `mirage logs "+name+"`").WithCause(werr)
 		default:
 		}
 		if st, err := supervisor.Load(name); err == nil && st.Status == supervisor.StatusRunning {
-			return map[string]any{"name": name, "status": st.Status, "pid": st.PID}, nil
+			return st.Status, st.PID, nil
 		}
 		if time.Now().After(deadline) {
-			return nil, miragerr.New(miragerr.SlugAgentTimeout, "VM did not become ready in time").
+			return "", 0, miragerr.New(miragerr.SlugAgentTimeout, "VM did not become ready in time").
 				WithHint("see `mirage logs " + name + "`")
 		}
 		time.Sleep(400 * time.Millisecond)

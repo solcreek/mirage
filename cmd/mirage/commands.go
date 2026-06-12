@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
@@ -109,26 +107,9 @@ type lsRow struct {
 }
 
 func cmdLs(_ []string) (any, error) {
-	var rows []lsRow
-	for _, k := range []struct {
-		kind  bundle.Kind
-		label string
-	}{{bundle.Image, "image"}, {bundle.VM, "vm"}} {
-		list, err := bundle.List(k.kind)
-		if err != nil {
-			return nil, err
-		}
-		for _, b := range list {
-			cfg, err := b.Load()
-			if err != nil {
-				continue
-			}
-			status := "stopped"
-			if st, err := supervisor.Load(b.Name); err == nil && st.Running() {
-				status = st.Status
-			}
-			rows = append(rows, lsRow{b.Name, k.label, cfg.OS, cfg.CPU, cfg.MemoryMB, status})
-		}
+	rows, err := coreList()
+	if err != nil {
+		return nil, err
 	}
 	return map[string]any{"bundles": rows}, nil
 }
@@ -137,20 +118,12 @@ func cmdClone(args []string) (any, error) {
 	if len(args) != 2 {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage clone <src> <dst>")
 	}
-	srcName, dstName := args[0], args[1]
-	src, _, ok := bundle.Find(srcName)
-	if !ok {
-		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+srcName)
-	}
-	dst := bundle.Resolve(bundle.VM, dstName)
-	id, err := engine.NewIdentity()
+	mac, err := coreClone(args[0], args[1])
 	if err != nil {
 		return nil, err
 	}
-	if err := bundle.Clone(src, dst, id); err != nil {
-		return nil, err
-	}
-	return map[string]any{"name": dstName, "from": srcName, "mac": id.MAC, "path": dst.Dir}, nil
+	dst := bundle.Resolve(bundle.VM, args[1])
+	return map[string]any{"name": args[1], "from": args[0], "mac": mac, "path": dst.Dir}, nil
 }
 
 func cmdStart(args []string) (any, error) {
@@ -177,7 +150,11 @@ func cmdStart(args []string) (any, error) {
 	if !*gui {
 		// Headless: spawn a detached per-VM supervisor that keeps the VM
 		// running and serves its socket for fast exec.
-		return startHeadless(name)
+		status, pid, err := startHeadless(name)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"name": name, "status": status, "pid": pid}, nil
 	}
 	vm, err := engine.BuildVM(b, cfg, engine.Options{Share: *share, ToolsImage: *tools})
 	if err != nil {
@@ -212,39 +189,14 @@ func cmdExec(args []string) (any, error) {
 	if name == "" || len(cmd) == 0 {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage exec <name> -- <command...>")
 	}
-	// Fast path: a running supervisor already has the VM booted.
-	if supervisor.IsRunning(name) {
-		exit, out, err := supervisor.Exec(name, strings.Join(cmd, " "), timeout)
-		if err != nil {
-			return nil, miragerr.New(miragerr.SlugHostEnv, "exec via supervisor failed").WithCause(err)
-		}
-		return map[string]any{"name": name, "exit_code": exit, "output": out}, nil
+	if !supervisor.IsRunning(name) {
+		fmt.Fprintf(os.Stderr, "waiting for guest agent on %s…\n", name)
 	}
-
-	b, _, ok := bundle.Find(name)
-	if !ok {
-		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
-	}
-	cfg, err := b.Load()
+	exit, out, err := coreExec(name, strings.Join(cmd, " "), timeout)
 	if err != nil {
 		return nil, err
 	}
-	// One-shot fallback (no supervisor running): boot, exec, stop. StartFresh
-	// retries briefly because a just-stopped sibling can still hold the disk.
-	vm, err := engine.StartFresh(b, cfg, engine.Options{}, 5)
-	if err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").
-			WithHint("another VM using this image may still be shutting down").WithCause(err)
-	}
-	defer func() { _ = vm.Stop() }()
-
-	fmt.Fprintf(os.Stderr, "waiting for guest agent on %s…\n", name)
-	res, err := engine.AgentExec(vm, strings.Join(cmd, " "), timeout)
-	if err != nil {
-		return nil, miragerr.New(miragerr.SlugAgentTimeout, "guest agent not reachable").
-			WithHint("is mirage-agent installed in the image? run the tools-image install.sh once").WithCause(err)
-	}
-	return map[string]any{"name": name, "exit_code": res.ExitCode, "output": res.Output}, nil
+	return map[string]any{"name": name, "exit_code": exit, "output": out}, nil
 }
 
 // cmdRun is the agent fan-out primitive: clone an image to a fresh ephemeral
@@ -253,72 +205,24 @@ func cmdExec(args []string) (any, error) {
 func cmdRun(args []string) (any, error) {
 	var image string
 	var cmd []string
-	keep := false
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
 			cmd = args[i+1:]
 			break
-		}
-		if args[i] == "--keep" {
-			keep = true
-			continue
 		}
 		if image == "" {
 			image = args[i]
 		}
 	}
 	if image == "" || len(cmd) == 0 {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage run <image> [--keep] -- <command...>")
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage run <image> -- <command...>")
 	}
-	src, _, ok := bundle.Find(image)
-	if !ok {
-		return nil, miragerr.New(miragerr.SlugNotFound, "no image named "+image)
-	}
-
-	name := "run-" + randHex(5)
-	dst := bundle.Resolve(bundle.VM, name)
-	id, err := engine.NewIdentity()
+	fmt.Fprintf(os.Stderr, "ephemeral run of %s: cloning and booting…\n", image)
+	name, exit, out, err := coreRun(image, strings.Join(cmd, " "), 3*time.Minute)
 	if err != nil {
 		return nil, err
 	}
-	if err := bundle.Clone(src, dst, id); err != nil {
-		return nil, err
-	}
-	cfg, err := dst.Load()
-	if err != nil {
-		return nil, err
-	}
-	cfg.Ephemeral = true
-	if err := dst.Save(cfg); err != nil {
-		return nil, err
-	}
-	if !keep {
-		defer func() { _ = bundle.Remove(dst) }()
-	}
-
-	vm, err := engine.StartFresh(dst, cfg, engine.Options{}, 5)
-	if err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").WithCause(err)
-	}
-	defer func() { _ = vm.Stop() }()
-
-	fmt.Fprintf(os.Stderr, "ephemeral %s: waiting for guest agent…\n", name)
-	res, err := engine.AgentExec(vm, strings.Join(cmd, " "), 3*time.Minute)
-	if err != nil {
-		return nil, miragerr.New(miragerr.SlugAgentTimeout, "guest agent not reachable").WithCause(err)
-	}
-	out := map[string]any{"ephemeral": name, "exit_code": res.ExitCode, "output": res.Output}
-	if keep {
-		out["kept"] = true
-	}
-	return out, nil
-}
-
-// randHex returns n random hex characters for ephemeral VM names.
-func randHex(n int) string {
-	b := make([]byte, (n+1)/2)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)[:n]
+	return map[string]any{"ephemeral": name, "exit_code": exit, "output": out}, nil
 }
 
 func cmdRm(args []string) (any, error) {

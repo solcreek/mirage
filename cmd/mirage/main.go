@@ -29,6 +29,7 @@ commands:
   stop <name>                                  stop a running VM
   logs <name>                                  print a VM's supervisor log
   rm <name>                                    delete a bundle
+  mcp                                          run the MCP server (stdio) for agents
   version                                      print version
 
 global flags:
@@ -52,9 +53,13 @@ func main() {
 	}
 
 	cmd, cmdArgs := rest[0], rest[1:]
-	// __vmm is the long-running supervisor process, not an envelope command.
+	// __vmm (supervisor) and mcp (server) are long-running, not envelope commands.
 	if cmd == "__vmm" {
 		runVmm(cmdArgs)
+		return
+	}
+	if cmd == "mcp" {
+		runMCPServer()
 		return
 	}
 	ctx := &cmdContext{json: jsonOut}
