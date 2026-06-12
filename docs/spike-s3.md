@@ -62,6 +62,41 @@ real solution: **seed the system TCC.db** (`/Library/Application Support/com.app
 with a `kTCCServiceScreenCapture` row for the agent, done once during golden-image
 prep via a SIP-off recovery boot. Clones then inherit the grant.
 
-Open: csreq/signature matching for the row, and macOS-26 TCC.db schema. Next
-step is `seed-tcc.sh` + the recovery-boot flow (decide vs. a manual one-time
-grant fallback).
+## Resolution (2026-06-12): screenshot works
+
+The working recipe, validated end to end (captured a real 1920×1080 desktop PNG):
+
+1. **SIP off** via recovery boot (`mirage start <img> --recovery` → recovery
+   Terminal → `csrutil disable` → reboot). Confirmed `csrutil status: disabled`.
+2. **Grant mirage-agent ScreenCapture** in the *system* TCC.db
+   (`/Library/Application Support/com.apple.TCC/TCC.db`): row with
+   `service=kTCCServiceScreenCapture`, `client=/usr/local/bin/mirage-agent`,
+   `client_type=1`, `auth_value=2`, and a `csreq` pinned to the agent's 20-byte
+   cdhash (`cdhash H"<CDHash>"` → `csreq -r- -b`). macOS-26 `access` schema
+   recorded; explicit-column INSERT works. `killall tccd` to refresh.
+3. **Capture from the root daemon via `launchctl asuser <console-uid>
+   screencapture`** — screencapture only sees the display inside the Aqua
+   session, and only root can `asuser`. TCC attributes the request to the
+   responsible process = **mirage-agent** (granting screencapture itself does
+   nothing; granting mirage-agent is load-bearing — proven by removing each row).
+4. **Unique temp path per capture** — a fixed `/tmp` path leaves a stale
+   root-owned file that the sticky bit makes unwritable next time.
+
+Architecture change: screenshot is served by the root daemon on **:4444**; the
+separate GUI LaunchAgent (:4445) was removed.
+
+### Known remaining wrinkle (macOS 26)
+
+After seeding, the first capture still triggered a one-time consent dialog —
+"mirage-agent is requesting to bypass the system private window picker and
+directly access your screen" — and the capture *succeeded* (the dialog was
+in the shot). macOS 15+/26 adds this periodic "direct screen access" consent on
+top of the TCC grant (SCContentSharingPicker). For fully-unattended *recurring*
+capture this needs suppressing too (likely an additional TCC/preference key);
+tracked as follow-up. Single captures work today.
+
+### Durability follow-up
+
+The agent is ad-hoc signed, so its cdhash changes on every rebuild and the seed
+must be re-run. A stable self-signed signing identity for the agent would make
+the grant survive rebuilds (and is needed before sealing a real golden image).
