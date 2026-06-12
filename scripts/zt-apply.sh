@@ -65,10 +65,10 @@ echo "4. auto-login (kcpassword + autoLoginUser)"
 install -m 0600 -o 0 -g 0 "$STAGE/kcpassword" "$MP/private/etc/kcpassword"
 defaults write "$MP/Library/Preferences/com.apple.loginwindow" autoLoginUser -string admin
 
-echo "5. install agent + LaunchDaemon"
+echo "5. install agent + LaunchDaemon (root-owned — launchd refuses non-root daemons)"
 mkdir -p "$MP/usr/local/bin" "$MP/Library/LaunchDaemons"
-install -m 0755 "$STAGE/mirage-agent" "$MP/usr/local/bin/mirage-agent"
-install -m 0644 "$STAGE/com.solcreek.mirage-agent.plist" "$MP/Library/LaunchDaemons/com.solcreek.mirage-agent.plist"
+install -m 0755 -o 0 -g 0 "$STAGE/mirage-agent" "$MP/usr/local/bin/mirage-agent"
+install -m 0644 -o 0 -g 0 "$STAGE/com.solcreek.mirage-agent.plist" "$MP/Library/LaunchDaemons/com.solcreek.mirage-agent.plist"
 
 echo "6. Screen Recording TCC grant"
 TCCDST="$MP/Library/Application Support/com.apple.TCC/TCC.db"
