@@ -24,8 +24,17 @@ import (
 // Recording (TCC) permission — hence it must run from the user LaunchAgent.
 func captureScreen() ([]byte, error) {
 	out := "/tmp/.mirage-shot.png"
-	if b, err := exec.Command("/usr/sbin/screencapture", "-x", "-t", "png", out).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("screencapture: %v: %s", err, b)
+	_ = os.Remove(out)
+	combined, err := exec.Command("/usr/sbin/screencapture", "-x", "-t", "png", out).CombinedOutput()
+	msg := strings.TrimSpace(string(combined))
+	if err != nil {
+		return nil, fmt.Errorf("screencapture failed: %v (%s)", err, msg)
+	}
+	info, statErr := os.Stat(out)
+	if statErr != nil || info.Size() == 0 {
+		// screencapture can exit 0 yet write nothing when Screen Recording is
+		// not granted to this process.
+		return nil, fmt.Errorf("screencapture produced no image — Screen Recording (TCC) not granted to the agent; output=%q", msg)
 	}
 	defer os.Remove(out)
 	return os.ReadFile(out)
