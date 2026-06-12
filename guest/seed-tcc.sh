@@ -49,7 +49,7 @@ sqlite3 "$DB" "INSERT OR REPLACE INTO access
   (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified, last_reminded)
   VALUES ('$SERVICE', '$AGENT', 1, 2, 4, 1, X'$HEX', 0, $NOW, $NOW);"
 
-echo "granted $SERVICE to $AGENT (cdhash $CDH):"
+echo "granted $SERVICE to $AGENT:"
 sqlite3 "$DB" "SELECT service, client, auth_value, auth_reason FROM access WHERE service='$SERVICE' AND client='$AGENT';"
 killall tccd 2>/dev/null || true
 echo "done — screenshot works with no consent dialog after a reboot."
