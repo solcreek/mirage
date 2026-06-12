@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -266,6 +268,51 @@ func cmdScreenshot(args []string) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"name": name, "path": path, "bytes": len(png)}, nil
+}
+
+// cmdAutologin enables boot-to-desktop for a guest user. The password is read
+// from stdin (echo disabled on a terminal) so it never lands in argv or shell
+// history; it is then obfuscated into /etc/kcpassword inside the guest.
+func cmdAutologin(args []string) (any, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage autologin <name> [user] (password on stdin)")
+	}
+	name := args[0]
+	user := "admin"
+	if len(args) == 2 {
+		user = args[1]
+	}
+	if _, _, ok := bundle.Find(name); !ok {
+		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
+	}
+	fmt.Fprintf(os.Stderr, "password for %s in %s: ", user, name)
+	pw, err := readSecret(os.Stdin)
+	if err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "read password").WithCause(err)
+	}
+	if !supervisor.IsRunning(name) {
+		fmt.Fprintf(os.Stderr, "booting %s to apply auto-login…\n", name)
+	}
+	if err := coreAutologin(name, user, pw, 3*time.Minute); err != nil {
+		return nil, err
+	}
+	return map[string]any{"name": name, "user": user, "autologin": true,
+		"note": "reboot (or Open in the GUI) to boot straight to the desktop"}, nil
+}
+
+// readSecret reads one line from r, disabling terminal echo when r is a TTY so
+// a typed password is not shown. Falls back to a plain read for piped input.
+func readSecret(f *os.File) (string, error) {
+	if fi, _ := f.Stat(); fi != nil && fi.Mode()&os.ModeCharDevice != 0 {
+		stty := func(arg string) { c := exec.Command("stty", arg); c.Stdin = f; _ = c.Run() }
+		stty("-echo")
+		defer func() { stty("echo"); fmt.Fprintln(os.Stderr) }()
+	}
+	line, err := bufio.NewReader(f).ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 func cmdRm(args []string) (any, error) {

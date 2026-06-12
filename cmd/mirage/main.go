@@ -27,6 +27,7 @@ commands:
   exec <name> -- <command...>                  run a command in the guest (headless)
   run <image> -- <command...>                  clone → run → destroy (ephemeral)
   screenshot <name> [-o out.png]               capture the guest display (PNG)
+  autologin <name> [user]                      enable boot-to-desktop (password on stdin)
   start <name> [--gui]                         boot a VM (headless, or windowed)
   stop <name>                                  stop a running VM
   logs <name>                                  print a VM's supervisor log
@@ -81,6 +82,8 @@ func main() {
 		code = ctx.run(cmdRun(cmdArgs))
 	case "screenshot":
 		code = ctx.run(cmdScreenshot(cmdArgs))
+	case "autologin":
+		code = ctx.run(cmdAutologin(cmdArgs))
 	case "start":
 		code = ctx.run(cmdStart(cmdArgs))
 	case "stop":

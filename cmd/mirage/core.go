@@ -2,11 +2,14 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/solcreek/mirage/internal/bundle"
 	"github.com/solcreek/mirage/internal/engine"
+	"github.com/solcreek/mirage/internal/kcpassword"
 	"github.com/solcreek/mirage/internal/supervisor"
 	"github.com/solcreek/mirage/pkg/miragerr"
 )
@@ -130,6 +133,36 @@ func coreClone(srcName, dstName string) (mac string, err error) {
 		return "", err
 	}
 	return id.MAC, nil
+}
+
+// coreAutologin enables boot-to-desktop for a guest user by writing
+// /etc/kcpassword and setting autoLoginUser, both via the root guest agent. The
+// obfuscated password is base64'd into a single guest command, so the plaintext
+// never appears in argv on either host or guest; the host caller passes it in
+// out of band (stdin). The VM must have a SecureToken user for the GUI session
+// to actually start — a Setup-Assistant account qualifies, an offline one does not.
+func coreAutologin(name, user, password string, timeout time.Duration) error {
+	if user == "" {
+		return miragerr.New(miragerr.SlugInvalidState, "user is required")
+	}
+	enc := base64.StdEncoding.EncodeToString(kcpassword.Encode([]byte(password)))
+	// One shell command, run as root by the agent: decode kcpassword into place,
+	// lock it down, then point the login window at the user. base64 -D is BSD
+	// (the macOS guest's base64); printf %s avoids a trailing newline.
+	cmd := fmt.Sprintf(
+		"printf %%s '%s' | base64 -D > /etc/kcpassword && chmod 600 /etc/kcpassword && "+
+			"defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string '%s'",
+		enc, user)
+	code, out, err := coreExec(name, cmd, timeout)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return miragerr.New(miragerr.SlugInvalidState,
+			"enabling auto-login failed in "+name+": "+out).
+			WithHint("the guest agent runs as root; check the user name exists in the guest")
+	}
+	return nil
 }
 
 // randHex returns n random hex characters for ephemeral VM names.
