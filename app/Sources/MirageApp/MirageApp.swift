@@ -21,6 +21,11 @@ struct MirageApp: App {
             ContentView()
                 .frame(minWidth: 640, minHeight: 420)
         }
+        // A live VM window, opened by name. The GUI owns and renders this VM
+        // in-process (host-side framebuffer) — no in-guest capture, no consent.
+        WindowGroup(for: String.self) { $name in
+            if let name { LiveVMWindow(name: name).navigationTitle("Mirage — \(name)") }
+        }
     }
 }
 
@@ -121,6 +126,7 @@ struct ContentView: View {
 struct VMRowView: View {
     let row: VMRow
     @ObservedObject var store: VMStore
+    @Environment(\.openWindow) private var openWindow
 
     private var running: Bool { row.status == "running" }
 
@@ -134,15 +140,17 @@ struct VMRowView: View {
             Spacer()
             if store.busy == row.name {
                 ProgressView().controlSize(.small)
+            } else if running {
+                // Running under the supervisor (headless) — the disk is in use,
+                // so the live view (which needs to own the disk) is unavailable.
+                Button("Screenshot") { store.screenshot(row.name) }
+                Button("Stop") { store.stop(row.name) }
             } else {
-                if running {
-                    Button("Screenshot") { store.screenshot(row.name) }
-                    Button("Stop") { store.stop(row.name) }
-                } else {
-                    Button("Start") { store.start(row.name) }
-                    if row.kind == "vm" {
-                        Button(role: .destructive) { store.delete(row.name) } label: { Image(systemName: "trash") }
-                    }
+                // Open = live GUI session (booted in-process, host-side render).
+                Button("Open") { openWindow(value: row.name) }
+                Button("Start") { store.start(row.name) }   // headless via supervisor
+                if row.kind == "vm" {
+                    Button(role: .destructive) { store.delete(row.name) } label: { Image(systemName: "trash") }
                 }
             }
         }
