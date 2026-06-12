@@ -110,8 +110,14 @@ final class VMRunner: ObservableObject {
     /// released immediately (an unclean guest power-off, which APFS tolerates);
     /// the toolbar "Shut Down" remains the graceful path.
     func teardown() {
-        guard let machine = vm, machine.canStop else { return }
-        machine.stop { _ in }
+        guard let machine = vm else { return }
+        guard machine.canStop else { vm = nil; return }
+        status = .stopping
+        // Retain `machine` inside the completion so the force-stop runs to
+        // completion even though the window (and this StateObject) is being torn
+        // down — otherwise the VM object can deallocate mid-stop and the
+        // Virtualization helper lingers holding the disk lock.
+        machine.stop { _ in withExtendedLifetime(machine) {} }
         vm = nil
         status = .stopped
     }
