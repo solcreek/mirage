@@ -1,7 +1,21 @@
 import SwiftUI
+import AppKit
+
+// A SwiftPM executable (no .app bundle) launches as a background process by
+// default — no Dock icon and the window stays hidden. Promote it to a regular
+// foreground app and bring it to front.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ note: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+}
 
 @main
 struct MirageApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup("Mirage") {
             ContentView()
