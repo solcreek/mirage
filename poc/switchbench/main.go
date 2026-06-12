@@ -7,6 +7,7 @@
 //	install --bundle <dir> --ipsw <path> [--disk-gb 40]
 //	clone   <src-bundle> <dst-bundle>
 //	bench   --base <bundle> --workdir <dir> [--cycles 3] [--settle 60s]
+//	gui     --bundle <dir> [--restore <file.vzsave>]
 //
 // The binary must be signed with the com.apple.security.virtualization
 // entitlement (see Makefile).
@@ -46,6 +47,8 @@ func main() {
 		err = cmdClone(os.Args[2:])
 	case "bench":
 		err = cmdBench(os.Args[2:])
+	case "gui":
+		err = cmdGUI(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}
@@ -508,6 +511,47 @@ func cmdBench(args []string) error {
 	}
 	logf("report written to %s", out)
 	return nil
+}
+
+// cmdGUI boots (or restores) a VM in the foreground with an interactive
+// window — keyboard and trackpad events go to the guest. The VM dies with
+// the window; this is the image-prep path, not the headless lifecycle.
+func cmdGUI(args []string) error {
+	fs := flag.NewFlagSet("gui", flag.ExitOnError)
+	bundle := fs.String("bundle", "", "bundle directory")
+	restore := fs.String("restore", "", "optional .vzsave file to resume from")
+	fs.Parse(args)
+	if *bundle == "" {
+		return fmt.Errorf("gui: --bundle is required")
+	}
+	vm, err := buildVM(*bundle)
+	if err != nil {
+		return err
+	}
+	m, err := readMeta(*bundle)
+	if err != nil {
+		return err
+	}
+	if *restore != "" {
+		t0 := time.Now()
+		if err := vm.RestoreMachineStateFromURL(*restore); err != nil {
+			return fmt.Errorf("restore: %w", err)
+		}
+		if err := vm.Resume(); err != nil {
+			return fmt.Errorf("resume: %w", err)
+		}
+		logf("restored + resumed in %s", time.Since(t0).Round(time.Millisecond))
+	} else {
+		if err := vm.Start(); err != nil {
+			return fmt.Errorf("start: %w", err)
+		}
+	}
+	if err := waitState(vm, vz.VirtualMachineStateRunning, 2*time.Minute); err != nil {
+		return err
+	}
+	logf("opening window — closing it kills the VM")
+	return vm.StartGraphicApplication(float64(m.DisplayW)/2, float64(m.DisplayH)/2,
+		vz.WithWindowTitle("switchbench: "+filepath.Base(*bundle)))
 }
 
 // suspend pauses the VM, saves its state to path, then stops it.
