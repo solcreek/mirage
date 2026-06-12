@@ -21,6 +21,13 @@ import (
 const agentPort = 4444
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "setup-autologin" {
+		if err := setupAutologin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "mirage-agent:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := serve(agentPort); err != nil {
 		fmt.Fprintln(os.Stderr, "mirage-agent:", err)
 		os.Exit(1)
