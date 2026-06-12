@@ -23,6 +23,7 @@ commands:
   create <name> --ipsw <path> [--disk-gb 40]   install a macOS golden image
   ls                                           list images and VMs
   clone <src> <dst>                            instant copy-on-write clone
+  exec <name> -- <command...>                  run a command in the guest (headless)
   start <name> --gui                           boot with an interactive window
   rm <name>                                    delete a bundle
   version                                      print version
@@ -57,6 +58,8 @@ func main() {
 		code = ctx.run(cmdLs(cmdArgs))
 	case "clone":
 		code = ctx.run(cmdClone(cmdArgs))
+	case "exec":
+		code = ctx.run(cmdExec(cmdArgs))
 	case "start":
 		code = ctx.run(cmdStart(cmdArgs))
 	case "rm":

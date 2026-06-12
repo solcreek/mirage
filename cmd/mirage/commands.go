@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/solcreek/mirage/internal/bundle"
 	"github.com/solcreek/mirage/internal/engine"
@@ -127,11 +131,12 @@ func cmdStart(args []string) (any, error) {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	gui := fs.Bool("gui", false, "open an interactive window (foreground)")
 	share := fs.String("share", "", "host directory to expose to the guest over VirtioFS (tag \"mirage\")")
+	tools := fs.String("tools", "", "attach a read-only tools image (auto-mounts in the guest)")
 	if err := fs.Parse(args); err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
 	if fs.NArg() != 1 {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> --gui [--share <dir>]")
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> --gui [--share <dir>] [--tools <img>]")
 	}
 	name := fs.Arg(0)
 	b, _, ok := bundle.Find(name)
@@ -147,7 +152,7 @@ func cmdStart(args []string) (any, error) {
 			"headless start needs the per-VM supervisor (not in this build); use --gui").
 			WithHint("headless `mirage start` lands with the supervisor milestone")
 	}
-	vm, err := engine.BuildVM(b, cfg, *share)
+	vm, err := engine.BuildVM(b, cfg, engine.Options{Share: *share, ToolsImage: *tools})
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +161,73 @@ func cmdStart(args []string) (any, error) {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "gui session failed").WithCause(err)
 	}
 	return map[string]any{"name": name, "stopped": true}, nil
+}
+
+// cmdExec boots a VM headlessly, waits for the guest agent on vsock, runs one
+// command, prints its output, and stops the VM. Because vz ties VM lifetime to
+// this process, exec is one-shot (boot→exec→stop) until the per-VM supervisor
+// lands; persistent `start`/`exec` is the next milestone.
+func cmdExec(args []string) (any, error) {
+	// Split on "--": everything after is the guest command.
+	var name string
+	var cmd []string
+	timeout := 3 * time.Minute
+	rest := args
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == "--" {
+			cmd = rest[i+1:]
+			break
+		}
+		if name == "" {
+			name = rest[i]
+		}
+	}
+	if name == "" || len(cmd) == 0 {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage exec <name> -- <command...>")
+	}
+	b, _, ok := bundle.Find(name)
+	if !ok {
+		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
+	}
+	cfg, err := b.Load()
+	if err != nil {
+		return nil, err
+	}
+	vm, err := engine.BuildVM(b, cfg, engine.Options{})
+	if err != nil {
+		return nil, err
+	}
+	if err := vm.Start(); err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").WithCause(err)
+	}
+	if err := engine.WaitRunning(vm, 2*time.Minute); err != nil {
+		return nil, err
+	}
+	defer func() { _ = vm.Stop() }()
+
+	fmt.Fprintf(os.Stderr, "waiting for guest agent on %s…\n", name)
+	conn, err := engine.DialGuest(vm, engine.AgentPort, timeout)
+	if err != nil {
+		return nil, miragerr.New(miragerr.SlugAgentTimeout, "guest agent not reachable").
+			WithHint("is mirage-agent installed in the image? run the tools-image install.sh once").WithCause(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("exec " + strings.Join(cmd, " ") + "\n")); err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "write to agent failed").WithCause(err)
+	}
+	reply, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "read from agent failed").WithCause(err)
+	}
+	var res struct {
+		OK       bool   `json:"ok"`
+		ExitCode int    `json:"exit_code"`
+		Output   string `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(reply), &res); err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "bad agent reply: "+reply).WithCause(err)
+	}
+	return map[string]any{"name": name, "exit_code": res.ExitCode, "output": res.Output}, nil
 }
 
 func cmdRm(args []string) (any, error) {
