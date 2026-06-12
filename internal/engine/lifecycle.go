@@ -61,9 +61,10 @@ func WaitState(vm *vz.VirtualMachine, want vz.VirtualMachineState, timeout time.
 
 // StartGUI boots the VM and opens an interactive window. It blocks until the
 // window closes (which stops the VM). This is the foreground image-prep path;
-// headless lifecycle is owned by the per-VM supervisor.
-func StartGUI(vm *vz.VirtualMachine, title string, width, height float64) error {
-	if err := vm.Start(); err != nil {
+// headless lifecycle is owned by the per-VM supervisor. If recovery is true the
+// VM boots into recoveryOS (used to toggle SIP for TCC seeding).
+func StartGUI(vm *vz.VirtualMachine, title string, width, height float64, recovery bool) error {
+	if err := vm.Start(vz.WithStartUpFromMacOSRecovery(recovery)); err != nil {
 		return err
 	}
 	if err := WaitState(vm, vz.VirtualMachineStateRunning, 2*time.Minute); err != nil {

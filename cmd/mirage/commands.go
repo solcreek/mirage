@@ -129,6 +129,7 @@ func cmdClone(args []string) (any, error) {
 func cmdStart(args []string) (any, error) {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	gui := fs.Bool("gui", false, "open an interactive window (foreground)")
+	recovery := fs.Bool("recovery", false, "boot into recoveryOS (implies --gui; for toggling SIP)")
 	share := fs.String("share", "", "host directory to expose to the guest over VirtioFS (tag \"mirage\")")
 	tools := fs.String("tools", "", "attach a read-only tools image (auto-mounts in the guest)")
 	pos, err := parseMixed(fs, args)
@@ -147,7 +148,7 @@ func cmdStart(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !*gui {
+	if !*gui && !*recovery {
 		// Headless: spawn a detached per-VM supervisor that keeps the VM
 		// running and serves its socket for fast exec.
 		status, pid, err := startHeadless(name)
@@ -160,8 +161,12 @@ func cmdStart(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "booting %s with a window — close it to stop the VM\n", name)
-	if err := engine.StartGUI(vm, "Mirage: "+name, float64(cfg.Display.Width)/2, float64(cfg.Display.Height)/2); err != nil {
+	mode := "with a window"
+	if *recovery {
+		mode = "into recoveryOS"
+	}
+	fmt.Fprintf(os.Stderr, "booting %s %s — close the window to stop the VM\n", name, mode)
+	if err := engine.StartGUI(vm, "Mirage: "+name, float64(cfg.Display.Width)/2, float64(cfg.Display.Height)/2, *recovery); err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "gui session failed").WithCause(err)
 	}
 	return map[string]any{"name": name, "stopped": true}, nil

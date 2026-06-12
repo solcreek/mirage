@@ -19,7 +19,8 @@ GOOS=darwin GOARCH=arm64 go build -o "${STAGE}/mirage-agent" "${ROOT}/cmd/mirage
 codesign -s - --force "${STAGE}/mirage-agent"
 
 cp "${ROOT}/guest/install.sh" "${STAGE}/install.sh"
-chmod +x "${STAGE}/install.sh"
+cp "${ROOT}/guest/seed-tcc.sh" "${STAGE}/seed-tcc.sh"
+chmod +x "${STAGE}/install.sh" "${STAGE}/seed-tcc.sh"
 cp "${ROOT}"/guest/launchd/*.plist "${STAGE}/"
 
 echo "creating raw image ${OUT}…"
