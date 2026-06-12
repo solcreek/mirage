@@ -15,9 +15,28 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// waitConsoleUser blocks until a real user owns the console (auto-login has
+// completed), returning that uid, or errors after the timeout.
+func waitConsoleUser(timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var uid string
+	for {
+		out, _ := exec.Command("stat", "-f", "%u", "/dev/console").Output()
+		uid = strings.TrimSpace(string(out))
+		if uid != "" && uid != "0" {
+			return uid, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("no GUI login session within %s (console uid=%q) — is auto-login enabled?", timeout, uid)
+		}
+		time.Sleep(time.Second)
+	}
+}
 
 // captureScreen grabs the main display as PNG. screencapture only sees the
 // display when it runs inside the logged-in GUI (Aqua) session, so the root
@@ -25,10 +44,12 @@ import (
 // capture to the responsible process (mirage-agent), which must hold the
 // ScreenCapture grant (seeded in the golden image).
 func captureScreen() ([]byte, error) {
-	uidBytes, err := exec.Command("stat", "-f", "%u", "/dev/console").Output()
-	uid := strings.TrimSpace(string(uidBytes))
-	if err != nil || uid == "" || uid == "0" {
-		return nil, fmt.Errorf("no GUI login session (console uid=%q) — enable auto-login", uid)
+	// screencapture needs a logged-in GUI (Aqua) session; auto-login lags the
+	// root agent by ~30 s after a fresh boot, so wait for the console user
+	// rather than failing immediately.
+	uid, err := waitConsoleUser(60 * time.Second)
+	if err != nil {
+		return nil, err
 	}
 	// Unique path per capture: a fixed path leaves a stale file that /tmp's
 	// sticky bit can make unwritable on the next capture.
