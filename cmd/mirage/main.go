@@ -5,7 +5,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 )
+
+func init() {
+	// AppKit (the VZ graphics window) must run on the main OS thread. Pin the
+	// main goroutine to it; vz.StartGraphicApplication requires this and crashes
+	// nondeterministically without it.
+	runtime.LockOSThread()
+}
 
 const usage = `mirage — ephemeral macOS VMs on Apple Silicon
 

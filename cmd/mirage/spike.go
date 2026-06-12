@@ -54,26 +54,32 @@ func cmdVsockProbe(args []string) (any, error) {
 	fmt.Fprintf(os.Stderr, "  2. /tmp/m/mirage-agent      # listen on vsock %d\n", engine.AgentPort)
 	fmt.Fprintln(os.Stderr, "Host is polling for the agent…")
 
+	// resultFile records PASS/FAIL so the run can be observed out-of-band.
+	const resultFile = "/tmp/mirage-s1-result.txt"
+	record := func(s string) {
+		fmt.Fprintln(os.Stderr, s)
+		_ = os.WriteFile(resultFile, []byte(s+"\n"), 0o644)
+	}
+
 	// Host-side connector runs while the GUI owns the main thread.
 	go func() {
-		conn, err := engine.DialGuest(vm, engine.AgentPort, 15*time.Minute)
+		conn, err := engine.DialGuest(vm, engine.AgentPort, 3*time.Hour)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "❌ S1 FAILED: host never connected:", err)
+			record("❌ S1 FAILED: host never connected: " + err.Error())
 			return
 		}
 		defer conn.Close()
 		fmt.Fprintln(os.Stderr, "✅ host→guest vsock connection established")
 		if _, err := conn.Write([]byte("ping\n")); err != nil {
-			fmt.Fprintln(os.Stderr, "❌ write failed:", err)
+			record("❌ S1 FAILED: write: " + err.Error())
 			return
 		}
 		reply, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "❌ read failed:", err)
+			record("❌ S1 FAILED: read: " + err.Error())
 			return
 		}
-		fmt.Fprintln(os.Stderr, "✅ S1 PASSED — guest replied:")
-		fmt.Fprintln(os.Stderr, "   "+reply)
+		record("✅ S1 PASSED — guest replied over vsock: " + reply)
 	}()
 
 	// Block on the GUI run loop so the user can drive the guest.
