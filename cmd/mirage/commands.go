@@ -12,6 +12,7 @@ import (
 
 	"github.com/solcreek/mirage/internal/bundle"
 	"github.com/solcreek/mirage/internal/engine"
+	"github.com/solcreek/mirage/internal/supervisor"
 	"github.com/solcreek/mirage/pkg/miragerr"
 )
 
@@ -99,11 +100,12 @@ func cmdCreate(args []string) (any, error) {
 // lsRow is one line of `mirage ls` output (package-level so the human renderer
 // can type-assert it).
 type lsRow struct {
-	Name  string `json:"name"`
-	Kind  string `json:"kind"`
-	OS    string `json:"os"`
-	CPU   uint   `json:"cpu"`
-	MemMB uint64 `json:"memory_mb"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	OS     string `json:"os"`
+	CPU    uint   `json:"cpu"`
+	MemMB  uint64 `json:"memory_mb"`
+	Status string `json:"status"`
 }
 
 func cmdLs(_ []string) (any, error) {
@@ -121,7 +123,11 @@ func cmdLs(_ []string) (any, error) {
 			if err != nil {
 				continue
 			}
-			rows = append(rows, lsRow{b.Name, k.label, cfg.OS, cfg.CPU, cfg.MemoryMB})
+			status := "stopped"
+			if st, err := supervisor.Load(b.Name); err == nil && st.Running() {
+				status = st.Status
+			}
+			rows = append(rows, lsRow{b.Name, k.label, cfg.OS, cfg.CPU, cfg.MemoryMB, status})
 		}
 	}
 	return map[string]any{"bundles": rows}, nil
@@ -169,9 +175,9 @@ func cmdStart(args []string) (any, error) {
 		return nil, err
 	}
 	if !*gui {
-		return nil, miragerr.New(miragerr.SlugInvalidState,
-			"headless start needs the per-VM supervisor (not in this build); use --gui").
-			WithHint("headless `mirage start` lands with the supervisor milestone")
+		// Headless: spawn a detached per-VM supervisor that keeps the VM
+		// running and serves its socket for fast exec.
+		return startHeadless(name)
 	}
 	vm, err := engine.BuildVM(b, cfg, engine.Options{Share: *share, ToolsImage: *tools})
 	if err != nil {
@@ -206,6 +212,15 @@ func cmdExec(args []string) (any, error) {
 	if name == "" || len(cmd) == 0 {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage exec <name> -- <command...>")
 	}
+	// Fast path: a running supervisor already has the VM booted.
+	if supervisor.IsRunning(name) {
+		exit, out, err := supervisor.Exec(name, strings.Join(cmd, " "), timeout)
+		if err != nil {
+			return nil, miragerr.New(miragerr.SlugHostEnv, "exec via supervisor failed").WithCause(err)
+		}
+		return map[string]any{"name": name, "exit_code": exit, "output": out}, nil
+	}
+
 	b, _, ok := bundle.Find(name)
 	if !ok {
 		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
@@ -214,9 +229,8 @@ func cmdExec(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// StartFresh retries briefly: a prior one-shot exec may still be releasing
-	// the disk image (vz Stop is async), which transiently fails Start. The
-	// per-VM supervisor will remove the boot-per-exec pattern entirely.
+	// One-shot fallback (no supervisor running): boot, exec, stop. StartFresh
+	// retries briefly because a just-stopped sibling can still hold the disk.
 	vm, err := engine.StartFresh(b, cfg, engine.Options{}, 5)
 	if err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").
@@ -352,9 +366,9 @@ func printBundles(bundles any) {
 		fmt.Println("no bundles (create one with: mirage create <name> --ipsw <path>)")
 		return
 	}
-	fmt.Printf("%-16s %-6s %-6s %4s %8s\n", "NAME", "KIND", "OS", "CPU", "MEM(MB)")
+	fmt.Printf("%-16s %-6s %-6s %4s %8s  %s\n", "NAME", "KIND", "OS", "CPU", "MEM(MB)", "STATUS")
 	for _, r := range rows {
-		fmt.Printf("%-16s %-6s %-6s %4d %8d\n", r.Name, r.Kind, r.OS, r.CPU, r.MemMB)
+		fmt.Printf("%-16s %-6s %-6s %4d %8d  %s\n", r.Name, r.Kind, r.OS, r.CPU, r.MemMB, r.Status)
 	}
 }
 

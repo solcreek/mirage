@@ -25,7 +25,9 @@ commands:
   clone <src> <dst>                            instant copy-on-write clone
   exec <name> -- <command...>                  run a command in the guest (headless)
   run <image> -- <command...>                  clone → run → destroy (ephemeral)
-  start <name> --gui                           boot with an interactive window
+  start <name> [--gui]                         boot a VM (headless, or windowed)
+  stop <name>                                  stop a running VM
+  logs <name>                                  print a VM's supervisor log
   rm <name>                                    delete a bundle
   version                                      print version
 
@@ -50,6 +52,11 @@ func main() {
 	}
 
 	cmd, cmdArgs := rest[0], rest[1:]
+	// __vmm is the long-running supervisor process, not an envelope command.
+	if cmd == "__vmm" {
+		runVmm(cmdArgs)
+		return
+	}
 	ctx := &cmdContext{json: jsonOut}
 	var code int
 	switch cmd {
@@ -65,6 +72,10 @@ func main() {
 		code = ctx.run(cmdRun(cmdArgs))
 	case "start":
 		code = ctx.run(cmdStart(cmdArgs))
+	case "stop":
+		code = ctx.run(cmdStop(cmdArgs))
+	case "logs":
+		code = ctx.run(cmdLogs(cmdArgs))
 	case "rm":
 		code = ctx.run(cmdRm(cmdArgs))
 	case "__vsock-probe":
