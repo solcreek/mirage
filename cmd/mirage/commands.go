@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
@@ -225,28 +225,86 @@ func cmdExec(args []string) (any, error) {
 	defer func() { _ = vm.Stop() }()
 
 	fmt.Fprintf(os.Stderr, "waiting for guest agent on %s…\n", name)
-	conn, err := engine.DialGuest(vm, engine.AgentPort, timeout)
+	res, err := engine.AgentExec(vm, strings.Join(cmd, " "), timeout)
 	if err != nil {
 		return nil, miragerr.New(miragerr.SlugAgentTimeout, "guest agent not reachable").
 			WithHint("is mirage-agent installed in the image? run the tools-image install.sh once").WithCause(err)
 	}
-	defer conn.Close()
-	if _, err := conn.Write([]byte("exec " + strings.Join(cmd, " ") + "\n")); err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "write to agent failed").WithCause(err)
-	}
-	reply, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "read from agent failed").WithCause(err)
-	}
-	var res struct {
-		OK       bool   `json:"ok"`
-		ExitCode int    `json:"exit_code"`
-		Output   string `json:"output"`
-	}
-	if err := json.Unmarshal([]byte(reply), &res); err != nil {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "bad agent reply: "+reply).WithCause(err)
-	}
 	return map[string]any{"name": name, "exit_code": res.ExitCode, "output": res.Output}, nil
+}
+
+// cmdRun is the agent fan-out primitive: clone an image to a fresh ephemeral
+// VM, boot it, run one command, then destroy the clone. The clone is marked
+// ephemeral so a crash mid-run leaves a reapable bundle.
+func cmdRun(args []string) (any, error) {
+	var image string
+	var cmd []string
+	keep := false
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			cmd = args[i+1:]
+			break
+		}
+		if args[i] == "--keep" {
+			keep = true
+			continue
+		}
+		if image == "" {
+			image = args[i]
+		}
+	}
+	if image == "" || len(cmd) == 0 {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage run <image> [--keep] -- <command...>")
+	}
+	src, _, ok := bundle.Find(image)
+	if !ok {
+		return nil, miragerr.New(miragerr.SlugNotFound, "no image named "+image)
+	}
+
+	name := "run-" + randHex(5)
+	dst := bundle.Resolve(bundle.VM, name)
+	id, err := engine.NewIdentity()
+	if err != nil {
+		return nil, err
+	}
+	if err := bundle.Clone(src, dst, id); err != nil {
+		return nil, err
+	}
+	cfg, err := dst.Load()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Ephemeral = true
+	if err := dst.Save(cfg); err != nil {
+		return nil, err
+	}
+	if !keep {
+		defer func() { _ = bundle.Remove(dst) }()
+	}
+
+	vm, err := engine.StartFresh(dst, cfg, engine.Options{}, 5)
+	if err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "vm start failed").WithCause(err)
+	}
+	defer func() { _ = vm.Stop() }()
+
+	fmt.Fprintf(os.Stderr, "ephemeral %s: waiting for guest agent…\n", name)
+	res, err := engine.AgentExec(vm, strings.Join(cmd, " "), 3*time.Minute)
+	if err != nil {
+		return nil, miragerr.New(miragerr.SlugAgentTimeout, "guest agent not reachable").WithCause(err)
+	}
+	out := map[string]any{"ephemeral": name, "exit_code": res.ExitCode, "output": res.Output}
+	if keep {
+		out["kept"] = true
+	}
+	return out, nil
+}
+
+// randHex returns n random hex characters for ephemeral VM names.
+func randHex(n int) string {
+	b := make([]byte, (n+1)/2)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)[:n]
 }
 
 func cmdRm(args []string) (any, error) {

@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -19,6 +21,35 @@ func ConnectGuest(vm *vz.VirtualMachine, port uint32) (*vz.VirtioSocketConnectio
 		return nil, fmt.Errorf("vm has no virtio socket device")
 	}
 	return devs[0].Connect(port)
+}
+
+// ExecResult is one command's outcome from the guest agent.
+type ExecResult struct {
+	ExitCode int    `json:"exit_code"`
+	Output   string `json:"output"`
+}
+
+// AgentExec waits for the guest agent, runs one command, and returns its
+// output and exit code. It dials with the given timeout (the agent isn't
+// reachable until the guest has booted far enough to start it).
+func AgentExec(vm *vz.VirtualMachine, command string, timeout time.Duration) (ExecResult, error) {
+	conn, err := DialGuest(vm, AgentPort, timeout)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("exec " + command + "\n")); err != nil {
+		return ExecResult{}, fmt.Errorf("write to agent: %w", err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("read from agent: %w", err)
+	}
+	var res ExecResult
+	if err := json.Unmarshal([]byte(line), &res); err != nil {
+		return ExecResult{}, fmt.Errorf("bad agent reply %q: %w", line, err)
+	}
+	return res, nil
 }
 
 // DialGuest retries ConnectGuest until the guest agent is listening or the

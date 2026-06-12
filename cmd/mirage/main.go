@@ -24,6 +24,7 @@ commands:
   ls                                           list images and VMs
   clone <src> <dst>                            instant copy-on-write clone
   exec <name> -- <command...>                  run a command in the guest (headless)
+  run <image> -- <command...>                  clone → run → destroy (ephemeral)
   start <name> --gui                           boot with an interactive window
   rm <name>                                    delete a bundle
   version                                      print version
@@ -60,6 +61,8 @@ func main() {
 		code = ctx.run(cmdClone(cmdArgs))
 	case "exec":
 		code = ctx.run(cmdExec(cmdArgs))
+	case "run":
+		code = ctx.run(cmdRun(cmdArgs))
 	case "start":
 		code = ctx.run(cmdStart(cmdArgs))
 	case "rm":
