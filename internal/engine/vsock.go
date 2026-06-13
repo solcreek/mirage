@@ -34,24 +34,56 @@ type ExecResult struct {
 // AgentExec waits for the guest agent, runs one command, and returns its
 // output and exit code. It dials with the given timeout (the agent isn't
 // reachable until the guest has booted far enough to start it).
+//
+// After a restore, the first vsock connections often connect but break on the
+// first write ("broken pipe") until the guest's virtio-vsock driver settles, so
+// a write failure is retried with a fresh connection until the deadline. The
+// retry is safe because a failed write means the command never reached the
+// agent. A failure once the command has been written (read side) is not retried
+// — the command may have run, and re-running it could double-execute.
 func AgentExec(vm *vz.VirtualMachine, command string, timeout time.Duration) (ExecResult, error) {
-	conn, err := DialGuest(vm, AgentPort, timeout)
+	deadline := time.Now().Add(timeout)
+	delay := 250 * time.Millisecond
+	var lastErr error
+	for {
+		res, err, wrote := agentExecOnce(vm, command, timeout)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+		if wrote { // command may have executed — do not retry
+			return ExecResult{}, err
+		}
+		if time.Now().After(deadline) {
+			return ExecResult{}, lastErr
+		}
+		time.Sleep(delay)
+		if delay < 2*time.Second {
+			delay *= 2
+		}
+	}
+}
+
+// agentExecOnce performs a single connect→write→read exchange. wrote reports
+// whether the command was fully written (and so may have executed), which tells
+// AgentExec whether retrying is safe.
+func agentExecOnce(vm *vz.VirtualMachine, command string, timeout time.Duration) (res ExecResult, err error, wrote bool) {
+	conn, err := ConnectGuest(vm, AgentPort)
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, fmt.Errorf("connect to agent: %w", err), false
 	}
 	defer conn.Close()
 	if _, err := conn.Write([]byte("exec " + command + "\n")); err != nil {
-		return ExecResult{}, fmt.Errorf("write to agent: %w", err)
+		return ExecResult{}, fmt.Errorf("write to agent: %w", err), false
 	}
 	line, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		return ExecResult{}, fmt.Errorf("read from agent: %w", err)
+		return ExecResult{}, fmt.Errorf("read from agent: %w", err), true
 	}
-	var res ExecResult
 	if err := json.Unmarshal([]byte(line), &res); err != nil {
-		return ExecResult{}, fmt.Errorf("bad agent reply %q: %w", line, err)
+		return ExecResult{}, fmt.Errorf("bad agent reply %q: %w", line, err), true
 	}
-	return res, nil
+	return res, nil, true
 }
 
 // AgentScreenshot asks the guest agent for a PNG of the main display and
