@@ -9,6 +9,7 @@ const (
 	OpStop       = "stop"
 	OpInfo       = "info"
 	OpScreenshot = "screenshot"
+	OpSnapshot   = "snapshot"
 )
 
 type Request struct {

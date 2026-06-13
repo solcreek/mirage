@@ -77,6 +77,19 @@ func Screenshot(name string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(resp.PNGBase64)
 }
 
+// Snapshot asks a running VM's supervisor to freeze a restore point (save RAM
+// state + clone the disk) and resume. Generous timeout: saving RAM is a few GB.
+func Snapshot(name string) error {
+	resp, err := request(name, Request{Op: OpSnapshot}, 3*time.Minute)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	return nil
+}
+
 // Ping checks that a supervisor is responsive.
 func Ping(name string) error {
 	resp, err := request(name, Request{Op: OpPing}, 5*time.Second)

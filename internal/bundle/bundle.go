@@ -41,6 +41,45 @@ func (b Bundle) ConfigPath() string { return filepath.Join(b.Dir, "config.json")
 func (b Bundle) DiskPath() string   { return filepath.Join(b.Dir, "disk.img") }
 func (b Bundle) AuxPath() string    { return filepath.Join(b.Dir, "aux.img") }
 
+// A snapshot is a paired freeze: saved RAM/device state plus a CoW clone of the
+// disk taken at the same paused moment. Both are required for a consistent
+// restore — restoring saved RAM onto a diverged disk would corrupt the guest.
+func (b Bundle) SnapshotStatePath() string { return filepath.Join(b.Dir, "snapshot.vzstate") }
+func (b Bundle) SnapshotDiskPath() string  { return filepath.Join(b.Dir, "snapshot-disk.img") }
+
+// HasSnapshot reports whether both halves of a snapshot are present.
+func (b Bundle) HasSnapshot() bool {
+	_, e1 := os.Stat(b.SnapshotStatePath())
+	_, e2 := os.Stat(b.SnapshotDiskPath())
+	return e1 == nil && e2 == nil
+}
+
+// SnapshotDisk clones the current (paused, quiesced) disk into the snapshot's
+// paired disk via clonefile — metadata-only on APFS regardless of image size.
+func (b Bundle) SnapshotDisk() error { return cloneFile(b.DiskPath(), b.SnapshotDiskPath()) }
+
+// ResetDiskToSnapshot replaces the live disk with a fresh clone of the
+// snapshot's disk, so a restore lands on the exact frozen disk state.
+func (b Bundle) ResetDiskToSnapshot() error { return cloneFile(b.SnapshotDiskPath(), b.DiskPath()) }
+
+// DiscardSnapshot removes both halves of the snapshot.
+func (b Bundle) DiscardSnapshot() error {
+	_ = os.Remove(b.SnapshotStatePath())
+	_ = os.Remove(b.SnapshotDiskPath())
+	return nil
+}
+
+// cloneFile makes an APFS copy-on-write clone of src at dst (replacing dst),
+// the same metadata-only primitive used for instant VM clones.
+func cloneFile(src, dst string) error {
+	_ = os.Remove(dst)
+	if out, err := exec.Command("cp", "-c", src, dst).CombinedOutput(); err != nil {
+		return miragerr.New(miragerr.SlugHostEnv,
+			"clonefile failed for "+filepath.Base(src)+": "+string(out)).WithCause(err)
+	}
+	return nil
+}
+
 // Load reads and validates a bundle's config.json.
 func (b Bundle) Load() (*Config, error) {
 	raw, err := os.ReadFile(b.ConfigPath())

@@ -25,8 +25,9 @@ import (
 // Run is the entry point for `mirage __vmm <name>`: it enforces the macOS-guest
 // quota, boots the VM headless, waits for the guest agent, then serves the
 // per-VM Unix socket until told to stop or signalled. It blocks for the VM's
-// lifetime.
-func Run(name string) error {
+// lifetime. When restore is true and a snapshot exists, it restores the warm
+// saved state instead of cold-booting.
+func Run(name string, restore bool) error {
 	b, _, ok := bundle.Find(name)
 	if !ok {
 		return miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
@@ -59,9 +60,24 @@ func Run(name string) error {
 	defer ln.Close()
 	_ = os.Chmod(st.Socket, 0o600)
 
-	vm, err := engine.StartFresh(b, cfg, engine.Options{}, 5)
-	if err != nil {
-		return miragerr.New(miragerr.SlugHostEnv, "vm start failed").WithCause(err)
+	var vm *vz.VirtualMachine
+	if restore && b.HasSnapshot() {
+		// Restore the warm snapshot: reset the disk to the snapshot's paired
+		// disk first so the restored RAM/device state matches it.
+		if err := b.ResetDiskToSnapshot(); err != nil {
+			return err
+		}
+		vm, err = engine.RestoreFresh(b, cfg, engine.Options{}, b.SnapshotStatePath(), 5)
+		if err != nil {
+			return miragerr.New(miragerr.SlugHostEnv, "restore from snapshot failed").
+				WithHint("the snapshot may be incompatible (host/OS changed); `mirage snapshot " + name + " --discard` then start fresh").
+				WithCause(err)
+		}
+	} else {
+		vm, err = engine.StartFresh(b, cfg, engine.Options{}, 5)
+		if err != nil {
+			return miragerr.New(miragerr.SlugHostEnv, "vm start failed").WithCause(err)
+		}
 	}
 
 	// Wait for the guest agent, then mark running.
@@ -72,13 +88,14 @@ func Run(name string) error {
 	st.Status = StatusRunning
 	_ = st.Save()
 
-	srv := &server{vm: vm, name: name}
+	srv := &server{vm: vm, name: name, b: b}
 	return srv.serve(ln)
 }
 
 type server struct {
 	vm   *vz.VirtualMachine
 	name string
+	b    bundle.Bundle
 	once sync.Once
 	done chan struct{}
 }
@@ -126,6 +143,21 @@ func (s *server) shutdown() {
 	})
 }
 
+// snapshot freezes the live VM into a restore point without ending the session:
+// pause + save RAM/device state, clone the now-quiesced disk as the paired disk,
+// then resume. The live disk may diverge afterwards — restore resets it to this
+// clone, so the snapshot stays consistent.
+func (s *server) snapshot() error {
+	if err := engine.SaveState(s.vm, s.b.SnapshotStatePath()); err != nil {
+		return err
+	}
+	if err := s.b.SnapshotDisk(); err != nil {
+		_ = s.vm.Resume() // best effort: get the VM running again even on failure
+		return err
+	}
+	return s.vm.Resume()
+}
+
 func (s *server) handle(conn net.Conn) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Minute))
@@ -167,6 +199,12 @@ func (s *server) handle(conn net.Conn) {
 			return
 		}
 		writeResp(conn, Response{OK: true, PNGBase64: base64.StdEncoding.EncodeToString(png)})
+	case OpSnapshot:
+		if err := s.snapshot(); err != nil {
+			writeResp(conn, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(conn, Response{OK: true})
 	default:
 		writeResp(conn, Response{OK: false, Error: "unknown op: " + req.Op})
 	}

@@ -142,6 +142,7 @@ func cmdStart(args []string) (any, error) {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	gui := fs.Bool("gui", false, "open an interactive window (foreground)")
 	recovery := fs.Bool("recovery", false, "boot into recoveryOS (implies --gui; for toggling SIP)")
+	restore := fs.Bool("restore", false, "restore the warm snapshot instead of cold-booting (headless)")
 	share := fs.String("share", "", "host directory to expose to the guest over VirtioFS (tag \"mirage\")")
 	tools := fs.String("tools", "", "attach a read-only tools image (auto-mounts in the guest)")
 	pos, err := parseMixed(fs, args)
@@ -149,7 +150,7 @@ func cmdStart(args []string) (any, error) {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
 	if len(pos) != 1 {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> --gui [--share <dir>] [--tools <img>]")
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> [--restore] [--gui] [--share <dir>] [--tools <img>]")
 	}
 	name := pos[0]
 	b, _, ok := bundle.Find(name)
@@ -160,14 +161,18 @@ func cmdStart(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if *restore && !b.HasSnapshot() {
+		return nil, miragerr.New(miragerr.SlugNotFound, "no snapshot for "+name).
+			WithHint("take one first: mirage snapshot " + name + " (while it is running)")
+	}
 	if !*gui && !*recovery {
 		// Headless: spawn a detached per-VM supervisor that keeps the VM
 		// running and serves its socket for fast exec.
-		status, pid, err := startHeadless(name)
+		status, pid, err := startHeadless(name, *restore)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"name": name, "status": status, "pid": pid}, nil
+		return map[string]any{"name": name, "status": status, "pid": pid, "restored": *restore}, nil
 	}
 	// A GUI/recovery boot needs exclusive access to the disk; a running
 	// supervisor holds it (otherwise vz fails cryptically locking aux storage).
@@ -313,6 +318,39 @@ func readSecret(f *os.File) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// cmdSnapshot freezes a warm restore point for a running VM (RAM state + paired
+// disk clone), so a later `mirage start <name> --restore` skips the cold boot.
+// --discard deletes an existing snapshot.
+func cmdSnapshot(args []string) (any, error) {
+	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
+	discard := fs.Bool("discard", false, "delete the snapshot instead of creating one")
+	pos, err := parseMixed(fs, args)
+	if err != nil || len(pos) != 1 {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage snapshot <name> [--discard]")
+	}
+	name := pos[0]
+	b, _, ok := bundle.Find(name)
+	if !ok {
+		return nil, miragerr.New(miragerr.SlugNotFound, "no bundle named "+name)
+	}
+	if *discard {
+		if err := b.DiscardSnapshot(); err != nil {
+			return nil, err
+		}
+		return map[string]any{"name": name, "discarded": true}, nil
+	}
+	if !supervisor.IsRunning(name) {
+		return nil, miragerr.New(miragerr.SlugInvalidState, name+" is not running").
+			WithHint("start it first: mirage start " + name + " — a snapshot captures the live (warm) state")
+	}
+	fmt.Fprintf(os.Stderr, "snapshotting %s (saving memory + cloning disk)…\n", name)
+	if err := supervisor.Snapshot(name); err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "snapshot failed").WithCause(err)
+	}
+	return map[string]any{"name": name, "snapshot": true,
+		"note": "restore with: mirage start " + name + " --restore"}, nil
 }
 
 func cmdRm(args []string) (any, error) {

@@ -15,13 +15,22 @@ import (
 // runVmm is the hidden `mirage __vmm <name>` entry: it becomes the per-VM
 // supervisor and blocks for the VM's lifetime. Not an envelope command.
 func runVmm(args []string) {
-	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: mirage __vmm <name>")
+	restore := false
+	var rest []string
+	for _, a := range args {
+		if a == "--restore" {
+			restore = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: mirage __vmm <name> [--restore]")
 		os.Exit(2)
 	}
-	name := args[0]
+	name := rest[0]
 	supervisor.ClearStartError(name)
-	if err := supervisor.Run(name); err != nil {
+	if err := supervisor.Run(name, restore); err != nil {
 		supervisor.WriteStartError(name, err) // let the spawning CLI recover the reason
 		fmt.Fprintln(os.Stderr, "mirage __vmm:", err)
 		os.Exit(1)
@@ -30,7 +39,8 @@ func runVmm(args []string) {
 
 // startHeadless spawns a detached supervisor for name and waits until it
 // reports running (or dies / times out). Returns the running status and PID.
-func startHeadless(name string) (status string, pid int, err error) {
+// When restore is true the supervisor restores the warm snapshot if present.
+func startHeadless(name string, restore bool) (status string, pid int, err error) {
 	if supervisor.IsRunning(name) {
 		return "", 0, miragerr.New(miragerr.SlugConflict, name+" is already running")
 	}
@@ -47,7 +57,11 @@ func startHeadless(name string) (status string, pid int, err error) {
 	}
 	defer logf.Close()
 
-	cmd := exec.Command(exe, "__vmm", name)
+	vmmArgs := []string{"__vmm", name}
+	if restore {
+		vmmArgs = append(vmmArgs, "--restore")
+	}
+	cmd := exec.Command(exe, vmmArgs...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach into its own session
 	if err := cmd.Start(); err != nil {

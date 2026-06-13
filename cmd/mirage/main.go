@@ -28,7 +28,8 @@ commands:
   run <image> -- <command...>                  clone → run → destroy (ephemeral)
   screenshot <name> [-o out.png]               capture the guest display (PNG)
   autologin <name> [user]                      enable boot-to-desktop (password on stdin)
-  start <name> [--gui]                         boot a VM (headless, or windowed)
+  snapshot <name> [--discard]                  freeze a warm restore point of a running VM
+  start <name> [--restore] [--gui]             boot a VM (headless/restore, or windowed)
   stop <name>                                  stop a running VM
   logs <name>                                  print a VM's supervisor log
   rm <name>                                    delete a bundle
@@ -84,6 +85,8 @@ func main() {
 		code = ctx.run(cmdScreenshot(cmdArgs))
 	case "autologin":
 		code = ctx.run(cmdAutologin(cmdArgs))
+	case "snapshot":
+		code = ctx.run(cmdSnapshot(cmdArgs))
 	case "start":
 		code = ctx.run(cmdStart(cmdArgs))
 	case "stop":

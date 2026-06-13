@@ -64,10 +64,18 @@ type cloneOut struct {
 type nameIn struct {
 	Name string `json:"name" jsonschema:"VM name"`
 }
+type startIn struct {
+	Name    string `json:"name" jsonschema:"VM name"`
+	Restore bool   `json:"restore,omitempty" jsonschema:"restore the warm snapshot if one exists (skips the cold boot)"`
+}
 type startOut struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	PID    int    `json:"pid"`
+}
+type snapshotOut struct {
+	Name     string `json:"name"`
+	Snapshot bool   `json:"snapshot"`
 }
 type stoppedOut struct {
 	Name    string `json:"name"`
@@ -141,13 +149,27 @@ func registerTools(s *mcp.Server) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "vm_start",
-		Description: "Boot a VM and keep it running so repeated vm_exec calls are fast. Returns macos_vm_limit if 2 macOS VMs already run.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, startOut, error) {
-		status, pid, err := startHeadless(in.Name)
+		Description: "Boot a VM and keep it running so repeated vm_exec calls are fast. Set restore=true to resume a warm snapshot (skips the boot). Returns macos_vm_limit if 2 macOS VMs already run.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in startIn) (*mcp.CallToolResult, startOut, error) {
+		status, pid, err := startHeadless(in.Name, in.Restore)
 		if err != nil {
 			return nil, startOut{}, err
 		}
 		return ok(), startOut{Name: in.Name, Status: status, PID: pid}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "vm_snapshot",
+		Description: "Freeze a warm restore point (memory + disk) of a running VM. A later vm_start with restore=true resumes it instantly, skipping the boot. The VM must be running.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, snapshotOut, error) {
+		if !supervisor.IsRunning(in.Name) {
+			return nil, snapshotOut{}, miragerr.New(miragerr.SlugInvalidState, in.Name+" is not running").
+				WithHint("start it first with vm_start")
+		}
+		if err := supervisor.Snapshot(in.Name); err != nil {
+			return nil, snapshotOut{}, err
+		}
+		return ok(), snapshotOut{Name: in.Name, Snapshot: true}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
