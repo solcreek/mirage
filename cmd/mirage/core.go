@@ -162,15 +162,24 @@ func coreAutologin(name, user, password string, timeout time.Duration) error {
 	// (the macOS guest's base64); printf %s avoids a trailing newline.
 	// autoLoginUserScreenLocked must be cleared too: if it is set, macOS performs
 	// the auto-login but then presents a locked screen (password prompt) instead
-	// of the desktop. `sync` is essential — coreExec cold-boots then force-stops
-	// the VM, so an unsynced write to /etc/kcpassword is lost on power-off (the
-	// file's metadata persists but its contents do not). Flush before returning.
+	// of the desktop. It is runtime state, though — macOS re-arms it to 1 whenever
+	// the screen locks (idle screensaver, or wake/restore). So we also disable the
+	// screen lock itself for the user (no screensaver password, no idle
+	// screensaver), keeping the flag at 0 across reboots.
+	//
+	// `sync` is essential — coreExec cold-boots then force-stops the VM, so an
+	// unsynced write to /etc/kcpassword is lost on power-off (the file's metadata
+	// persists but its contents do not). Flush before returning.
 	lw := "/Library/Preferences/com.apple.loginwindow"
 	cmd := fmt.Sprintf(
-		"printf %%s '%s' | base64 -D > /etc/kcpassword && chmod 600 /etc/kcpassword && "+
-			"defaults write %s autoLoginUser -string '%s' && "+
-			"defaults write %s autoLoginUserScreenLocked -bool false && sync",
-		enc, lw, user, lw)
+		"printf %%s '%[1]s' | base64 -D > /etc/kcpassword && chmod 600 /etc/kcpassword && "+
+			"defaults write %[2]s autoLoginUser -string '%[3]s' && "+
+			"defaults write %[2]s autoLoginUserScreenLocked -bool false; "+
+			"sudo -u '%[3]s' defaults write com.apple.screensaver askForPassword -int 0; "+
+			"sudo -u '%[3]s' defaults write com.apple.screensaver askForPasswordDelay -int 0; "+
+			"sudo -u '%[3]s' defaults -currentHost write com.apple.screensaver idleTime -int 0; "+
+			"sync",
+		enc, lw, user)
 	code, out, err := coreExec(name, cmd, timeout)
 	if err != nil {
 		return err
