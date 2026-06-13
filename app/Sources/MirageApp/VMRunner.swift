@@ -79,6 +79,14 @@ final class VMRunner: ObservableObject {
 
     func start() {
         guard status == .idle || status == .stopped || isFailed else { return }
+        // Claim a quota slot (and register this VM in the shared state dir) before
+        // booting, so the host-wide 2-VM limit is enforced across CLI and GUI.
+        do {
+            try SupervisorState.claim(name)
+        } catch {
+            status = .failed(Self.describe(error))
+            return
+        }
         do {
             // Restore the paired snapshot if present: reset the disk to the
             // snapshot's disk (instant CoW clone), then restore RAM and resume.
@@ -91,6 +99,7 @@ final class VMRunner: ObservableObject {
                     Task { @MainActor in
                         if let err {
                             self?.status = .failed("restore failed: \((err as NSError).localizedDescription) — Discard Snapshot to cold-boot")
+                            self?.releaseSlot()
                             return
                         }
                         self?.resume(machine)
@@ -105,23 +114,27 @@ final class VMRunner: ObservableObject {
                 Task { @MainActor in
                     switch result {
                     case .success: self?.status = .running
-                    case .failure(let e): self?.status = .failed(Self.describe(e))
+                    case .failure(let e): self?.status = .failed(Self.describe(e)); self?.releaseSlot()
                     }
                 }
             }
         } catch {
             status = .failed(Self.describe(error))
+            releaseSlot()
         }
     }
 
     private func makeMachine(_ cfg: VZVirtualMachineConfiguration) -> VZVirtualMachine {
         let machine = VZVirtualMachine(configuration: cfg)
-        let d = Delegate { [weak self] _ in Task { @MainActor in self?.status = .stopped } }
+        // When the guest stops on its own (or via Shut Down), drop the quota slot.
+        let d = Delegate { [weak self] _ in Task { @MainActor in self?.status = .stopped; self?.releaseSlot() } }
         machine.delegate = d
         self.delegate = d
         self.vm = machine
         return machine
     }
+
+    private func releaseSlot() { SupervisorState.release(name) }
 
     private func resume(_ machine: VZVirtualMachine) {
         machine.resume { [weak self] r in
@@ -163,6 +176,7 @@ final class VMRunner: ObservableObject {
                                 self?.vm = nil
                                 self?.hasSnapshot = true
                                 self?.status = .stopped
+                                self?.releaseSlot() // VM is down — free the quota slot
                             }
                         }
                     }
@@ -195,6 +209,7 @@ final class VMRunner: ObservableObject {
     /// released immediately (an unclean guest power-off, which APFS tolerates);
     /// the toolbar "Shut Down" remains the graceful path.
     func teardown() {
+        defer { releaseSlot() } // always free the quota slot when the window closes
         guard let machine = vm else { return }
         guard machine.canStop else { vm = nil; return }
         status = .stopping

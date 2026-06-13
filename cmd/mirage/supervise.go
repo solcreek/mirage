@@ -102,6 +102,10 @@ func cmdStop(args []string) (any, error) {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage stop <name>")
 	}
 	name := args[0]
+	if supervisor.OwnedByGUI(name) {
+		return nil, miragerr.New(miragerr.SlugInvalidState, name+" is open in the Mirage GUI").
+			WithHint("close its window in the GUI to stop it")
+	}
 	if !supervisor.IsRunning(name) {
 		supervisor.RemoveState(name) // clean up any stale state
 		return nil, miragerr.New(miragerr.SlugInvalidState, name+" is not running")

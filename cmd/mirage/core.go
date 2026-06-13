@@ -20,6 +20,10 @@ import (
 // coreExec runs a command in a VM. If a supervisor is already running it reuses
 // the live VM; otherwise it cold-boots one-shot (boot → exec → stop).
 func coreExec(name, command string, timeout time.Duration) (exitCode int, output string, err error) {
+	if supervisor.OwnedByGUI(name) {
+		return 0, "", miragerr.New(miragerr.SlugInvalidState, name+" is open in the Mirage GUI").
+			WithHint("control it from the GUI window, or close it first")
+	}
 	if supervisor.IsRunning(name) {
 		return supervisor.Exec(name, command, timeout)
 	}
@@ -115,6 +119,10 @@ func coreList() ([]lsRow, error) {
 // coreScreenshot returns a PNG of a running VM's display. Screenshot needs the
 // GUI session, so the VM must be started (a running supervisor).
 func coreScreenshot(name string) ([]byte, error) {
+	if supervisor.OwnedByGUI(name) {
+		return nil, miragerr.New(miragerr.SlugInvalidState, name+" is open in the Mirage GUI").
+			WithHint("the GUI shows it live; screenshot from there")
+	}
 	if !supervisor.IsRunning(name) {
 		return nil, miragerr.New(miragerr.SlugInvalidState, name+" is not running").
 			WithHint("start it first: mirage start " + name)

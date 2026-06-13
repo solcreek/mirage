@@ -22,8 +22,17 @@ const (
 	StatusRunning = "running"
 )
 
-// State is the PID-stamped record a supervisor writes so clients can find and
-// address it. Stored at <stateVMsDir>/<name>.json.
+// Owner identifies which process model is running a VM. GUI-owned VMs run
+// in-process in the SwiftUI app (no per-VM socket); supervisor-owned VMs are
+// the headless __vmm helpers the CLI talks to. Both count toward the macOS-VM
+// quota; the empty value means supervisor (backward compatible).
+const (
+	OwnerSupervisor = ""
+	OwnerGUI        = "gui"
+)
+
+// State is the PID-stamped record a supervisor (or the GUI) writes so clients
+// can find it and the quota can count it. Stored at <stateVMsDir>/<name>.json.
 type State struct {
 	Name      string `json:"name"`
 	PID       int    `json:"pid"`
@@ -31,6 +40,7 @@ type State struct {
 	Socket    string `json:"socket"`
 	Status    string `json:"status"`
 	StartedAt string `json:"started_at"`
+	Owner     string `json:"owner,omitempty"`
 }
 
 func dir() string { return bundle.StateVMsDir() }
@@ -150,4 +160,11 @@ func (s *State) Running() bool { return alive(s.PID) }
 func IsRunning(name string) bool {
 	s, err := Load(name)
 	return err == nil && s.Running()
+}
+
+// OwnedByGUI reports whether a live VM is owned by the GUI app (in-process, no
+// per-VM socket — so the CLI can't drive it and should say so).
+func OwnedByGUI(name string) bool {
+	s, err := Load(name)
+	return err == nil && s.Running() && s.Owner == OwnerGUI
 }
