@@ -27,3 +27,6 @@ bin/
 # Swift build artifacts
 app/.build/
 app/.swiftpm/
+
+# GUI app bundle build output
+app/build/

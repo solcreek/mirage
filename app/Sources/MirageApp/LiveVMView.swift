@@ -1,21 +1,29 @@
 import SwiftUI
 import Virtualization
+import UniformTypeIdentifiers
+
+// VMViewHolder keeps a reference to the live AppKit view so the window can grab
+// its rendered framebuffer for a PNG export (host-side — no guest capture).
+final class VMViewHolder { weak var view: VZVirtualMachineView? }
 
 // LiveVMView bridges AppKit's VZVirtualMachineView into SwiftUI. The view renders
 // the guest framebuffer on the host — so what you see is the live screen, with no
 // in-guest capture and therefore no screen-recording consent prompt.
 struct LiveVMView: NSViewRepresentable {
     let vm: VZVirtualMachine?
+    let holder: VMViewHolder
 
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let v = VZVirtualMachineView()
         v.capturesSystemKeys = true   // route ⌘-tab etc. to the guest when focused
         v.virtualMachine = vm
+        holder.view = v
         return v
     }
 
     func updateNSView(_ v: VZVirtualMachineView, context: Context) {
         v.virtualMachine = vm
+        holder.view = v
     }
 }
 
@@ -24,6 +32,7 @@ struct LiveVMView: NSViewRepresentable {
 struct LiveVMWindow: View {
     let name: String
     @StateObject private var runner: VMRunner
+    @State private var holder = VMViewHolder()
 
     init(name: String) {
         self.name = name
@@ -36,13 +45,26 @@ struct LiveVMWindow: View {
             Divider()
             ZStack {
                 Color.black
-                LiveVMView(vm: runner.vm)
+                LiveVMView(vm: runner.vm, holder: holder)
                 if case .running = runner.status {} else { overlay }
             }
         }
         .onAppear { if case .idle = runner.status { runner.start() } }
         .onDisappear { runner.teardown() }   // never let the VM outlive its window
         .frame(minWidth: 640, minHeight: 480)
+    }
+
+    // Capture the host-rendered framebuffer to a PNG — no in-guest screencapture,
+    // so no screen-recording consent prompt.
+    private func savePNG() {
+        guard let view = holder.view, view.bounds.width > 0,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let data = rep.representation(using: .png, properties: [:]) else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "\(name).png"
+        if panel.runModal() == .OK, let url = panel.url { try? data.write(to: url) }
     }
 
     private var toolbar: some View {
@@ -57,6 +79,8 @@ struct LiveVMWindow: View {
             }
             Spacer()
             if running {
+                Button("Save PNG…") { savePNG() }
+                    .help("Save the current screen as a PNG (captured on the host)")
                 Button("Snapshot") { runner.snapshot() }
                     .help("Freeze the current desktop so Open restores here instantly")
                 if runner.hasSnapshot {

@@ -23,10 +23,15 @@ struct VMList: Decodable { let bundles: [VMRow]? }
 struct ScreenshotResult: Decodable { let name: String; let path: String; let bytes: Int }
 
 enum MirageClient {
-    /// Resolve the `mirage` binary: $MIRAGE_BIN, else the repo's bin/mirage
-    /// derived from this source file's path (a dev convenience).
+    /// Resolve the `mirage` binary, in order: $MIRAGE_BIN; the copy bundled in
+    /// the .app (Contents/Resources/mirage) for a double-clicked install; else
+    /// the repo's bin/mirage derived from this source file's path (dev runs).
     static var binary: String = {
         if let p = ProcessInfo.processInfo.environment["MIRAGE_BIN"], !p.isEmpty { return p }
+        if let res = Bundle.main.resourceURL {
+            let bundled = res.appendingPathComponent("mirage")
+            if FileManager.default.isExecutableFile(atPath: bundled.path) { return bundled.path }
+        }
         // .../app/Sources/MirageApp/MirageClient.swift → repo root is 4 levels up.
         let here = URL(fileURLWithPath: #filePath)
         let repo = here.deletingLastPathComponent().deletingLastPathComponent()
