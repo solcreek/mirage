@@ -6,23 +6,32 @@ import Virtualization
 // set is kept in step with the Go engine so a bundle boots identically either way.
 // The GUI runs the VM here (host-side rendering) instead of capturing inside the
 // guest, which is why the live view needs no guest screen-recording permission.
+//
+// It also implements snapshots: a paired freeze of RAM/device state (.vzstate)
+// and a CoW clone of the disk, so Open can restore straight to a warm, logged-in
+// desktop instead of cold-booting. Restore always resets the disk to the
+// snapshot's disk first, so every Open returns to the exact frozen state.
 @MainActor
 final class VMRunner: ObservableObject {
-    enum Status: Equatable { case idle, starting, running, stopping, stopped, failed(String) }
+    enum Status: Equatable { case idle, starting, restoring, running, saving, stopping, stopped, failed(String) }
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var vm: VZVirtualMachine?
+    @Published private(set) var hasSnapshot: Bool
 
     let name: String
+    private let bundle: VMBundle?
     private var delegate: Delegate?
 
-    init(name: String) { self.name = name }
+    init(name: String) {
+        self.name = name
+        self.bundle = VMBundle.find(name)
+        self.hasSnapshot = bundle?.hasSnapshot ?? false
+    }
 
     /// Build the configuration from the on-disk bundle. Throws a readable error.
     private func buildConfiguration() throws -> VZVirtualMachineConfiguration {
-        guard let bundle = VMBundle.find(name) else {
-            throw Err("no bundle named \(name)")
-        }
+        guard let bundle else { throw Err("no bundle named \(name)") }
         let c = try bundle.load()
         guard c.os == "macos" else { throw Err("the live view supports macOS guests only") }
 
@@ -70,16 +79,28 @@ final class VMRunner: ObservableObject {
 
     func start() {
         guard status == .idle || status == .stopped || isFailed else { return }
-        status = .starting
         do {
-            let cfg = try buildConfiguration()
-            let machine = VZVirtualMachine(configuration: cfg)
-            let d = Delegate { [weak self] reason in
-                Task { @MainActor in self?.status = .stopped; self?.note(reason) }
+            // Restore the paired snapshot if present: reset the disk to the
+            // snapshot's disk (instant CoW clone), then restore RAM and resume.
+            if let bundle, bundle.hasSnapshot {
+                try resetDiskToSnapshot(bundle)
+                let cfg = try buildConfiguration()
+                let machine = makeMachine(cfg)
+                status = .restoring
+                machine.restoreMachineStateFrom(url: bundle.snapshotStateURL) { [weak self] (err: Error?) in
+                    Task { @MainActor in
+                        if let err {
+                            self?.status = .failed("restore failed: \((err as NSError).localizedDescription) — Discard Snapshot to cold-boot")
+                            return
+                        }
+                        self?.resume(machine)
+                    }
+                }
+                return
             }
-            machine.delegate = d
-            self.delegate = d
-            self.vm = machine
+            let cfg = try buildConfiguration()
+            let machine = makeMachine(cfg)
+            status = .starting
             machine.start { [weak self] result in
                 Task { @MainActor in
                     switch result {
@@ -91,6 +112,70 @@ final class VMRunner: ObservableObject {
         } catch {
             status = .failed(Self.describe(error))
         }
+    }
+
+    private func makeMachine(_ cfg: VZVirtualMachineConfiguration) -> VZVirtualMachine {
+        let machine = VZVirtualMachine(configuration: cfg)
+        let d = Delegate { [weak self] _ in Task { @MainActor in self?.status = .stopped } }
+        machine.delegate = d
+        self.delegate = d
+        self.vm = machine
+        return machine
+    }
+
+    private func resume(_ machine: VZVirtualMachine) {
+        machine.resume { [weak self] r in
+            Task { @MainActor in
+                switch r {
+                case .success: self?.status = .running
+                case .failure(let e): self?.status = .failed(Self.describe(e))
+                }
+            }
+        }
+    }
+
+    /// Take a snapshot: pause → save RAM/device state → stop → clone the now-quiesced
+    /// disk. Pairing the disk clone with the saved state guarantees a consistent
+    /// restore. The VM stops afterwards (the session ends at the freeze point).
+    func snapshot() {
+        guard let bundle, let machine = vm, machine.canPause, status == .running else { return }
+        status = .saving
+        machine.pause { [weak self] r in
+            Task { @MainActor in
+                guard case .success = r else { self?.status = .failed("pause failed"); return }
+                machine.saveMachineStateTo(url: bundle.snapshotStateURL) { (err: Error?) in
+                    Task { @MainActor in
+                        if let err {
+                            self?.status = .failed("snapshot failed: \((err as NSError).localizedDescription)")
+                            return
+                        }
+                        // Still paused (so the disk is quiesced): clone it as the
+                        // snapshot's paired disk, then power off.
+                        do {
+                            try self?.cloneFile(from: bundle.diskURL, to: bundle.snapshotDiskURL)
+                        } catch {
+                            self?.status = .failed("disk snapshot failed: \(Self.describe(error))")
+                            return
+                        }
+                        machine.stop { _ in
+                            withExtendedLifetime(machine) {}
+                            Task { @MainActor in
+                                self?.vm = nil
+                                self?.hasSnapshot = true
+                                self?.status = .stopped
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func discardSnapshot() {
+        guard let bundle else { return }
+        try? FileManager.default.removeItem(at: bundle.snapshotStateURL)
+        try? FileManager.default.removeItem(at: bundle.snapshotDiskURL)
+        hasSnapshot = false
     }
 
     func stop() {
@@ -122,8 +207,29 @@ final class VMRunner: ObservableObject {
         status = .stopped
     }
 
+    // resetDiskToSnapshot replaces the live disk with a fresh CoW clone of the
+    // snapshot's disk, so a restore always lands on the exact frozen disk state
+    // (any in-session changes from the previous Open are discarded).
+    private func resetDiskToSnapshot(_ bundle: VMBundle) throws {
+        let tmp = bundle.diskURL.appendingPathExtension("restore")
+        try? FileManager.default.removeItem(at: tmp)
+        try cloneFile(from: bundle.snapshotDiskURL, to: tmp)
+        _ = try FileManager.default.replaceItemAt(bundle.diskURL, withItemAt: tmp)
+    }
+
+    // cloneFile makes an APFS copy-on-write clone via `cp -c` (metadata-only,
+    // ~instant regardless of size — the same primitive the Go bundle clone uses).
+    private func cloneFile(from: URL, to: URL) throws {
+        try? FileManager.default.removeItem(at: to)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/cp")
+        p.arguments = ["-c", from.path, to.path]
+        try p.run()
+        p.waitUntilExit()
+        if p.terminationStatus != 0 { throw Err("cp -c failed (status \(p.terminationStatus))") }
+    }
+
     private var isFailed: Bool { if case .failed = status { return true }; return false }
-    private func note(_ s: String?) {}
     private static func describe(_ e: Error) -> String {
         (e as? Err)?.message ?? (e as NSError).localizedDescription
     }

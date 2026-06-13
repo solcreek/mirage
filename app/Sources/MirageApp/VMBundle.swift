@@ -33,6 +33,16 @@ struct VMBundle {
     var diskURL: URL { dir.appendingPathComponent("disk.img") }
     var auxURL: URL { dir.appendingPathComponent("aux.img") }
 
+    // A snapshot is a paired freeze: the saved RAM/device state plus a CoW clone
+    // of the disk taken at the same paused moment. Both are needed for a
+    // consistent restore (RAM state alone would mismatch a diverged disk).
+    var snapshotStateURL: URL { dir.appendingPathComponent("snapshot.vzstate") }
+    var snapshotDiskURL: URL { dir.appendingPathComponent("snapshot-disk.img") }
+    var hasSnapshot: Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: snapshotStateURL.path) && fm.fileExists(atPath: snapshotDiskURL.path)
+    }
+
     func load() throws -> VMConfig {
         let data = try Data(contentsOf: configURL)
         // Go encodes []byte as base64 strings; JSONDecoder's default Data

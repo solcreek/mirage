@@ -50,8 +50,18 @@ struct LiveVMWindow: View {
             Circle().fill(running ? .green : .secondary).frame(width: 9, height: 9)
             Text(name).font(.body.weight(.medium))
             Text(statusText).font(.caption).foregroundStyle(.secondary)
+            if runner.hasSnapshot {
+                Label("snapshot", systemImage: "camera.viewfinder")
+                    .font(.caption2).foregroundStyle(.blue)
+                    .help("Open restores to this saved desktop instantly")
+            }
             Spacer()
             if running {
+                Button("Snapshot") { runner.snapshot() }
+                    .help("Freeze the current desktop so Open restores here instantly")
+                if runner.hasSnapshot {
+                    Button("Discard Snapshot", role: .destructive) { runner.discardSnapshot() }
+                }
                 Button("Shut Down") { runner.stop() }
             }
         }
@@ -62,6 +72,8 @@ struct LiveVMWindow: View {
         VStack(spacing: 8) {
             switch runner.status {
             case .starting: ProgressView(); Text("Booting \(name)…").foregroundStyle(.white)
+            case .restoring: ProgressView(); Text("Restoring snapshot…").foregroundStyle(.white)
+            case .saving: ProgressView(); Text("Saving snapshot…").foregroundStyle(.white)
             case .stopping: ProgressView(); Text("Shutting down…").foregroundStyle(.white)
             case .stopped: Text("VM stopped").foregroundStyle(.white)
             case .failed(let m):
@@ -77,7 +89,9 @@ struct LiveVMWindow: View {
         switch runner.status {
         case .idle: return "idle"
         case .starting: return "booting"
+        case .restoring: return "restoring"
         case .running: return "running (live)"
+        case .saving: return "saving snapshot"
         case .stopping: return "stopping"
         case .stopped: return "stopped"
         case .failed: return "failed"
