@@ -55,7 +55,8 @@ final class VMRunner: ObservableObject {
         // Graphics device + display — present on every boot, matching the engine.
         let gfx = VZMacGraphicsDeviceConfiguration()
         gfx.displays = [VZMacGraphicsDisplayConfiguration(
-            widthInPixels: c.display.width, heightInPixels: c.display.height, pixelsPerInch: 80)]
+            widthInPixels: c.display.width, heightInPixels: c.display.height,
+            pixelsPerInch: c.display.ppi ?? 80)]  // high ppi → HiDPI/Retina rendering
         cfg.graphicsDevices = [gfx]
 
         // NAT network with the bundle's pinned MAC (so it matches the agent's view).

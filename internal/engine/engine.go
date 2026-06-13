@@ -81,7 +81,11 @@ func BuildVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualMachin
 	if err != nil {
 		return nil, err
 	}
-	display, err := vz.NewMacGraphicsDisplayConfiguration(c.Display.Width, c.Display.Height, 80)
+	ppi := c.Display.PPI
+	if ppi == 0 {
+		ppi = 80 // legacy default (standard density)
+	}
+	display, err := vz.NewMacGraphicsDisplayConfiguration(c.Display.Width, c.Display.Height, ppi)
 	if err != nil {
 		return nil, err
 	}

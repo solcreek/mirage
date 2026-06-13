@@ -78,7 +78,9 @@ func Install(ctx context.Context, b bundle.Bundle, ipsw string, diskGB int64, pr
 		SchemaVersion: 1, OS: "macos", CPU: cpu, MemoryMB: memMB,
 		MAC: mac.String(), HardwareModel: hw.DataRepresentation(),
 		MachineID: mid.DataRepresentation(),
-		Display:   bundle.Display{Width: 1920, Height: 1080},
+		// HiDPI by default: 2560x1600 @ 220ppi renders @2x ("looks like" 1280x800
+		// Retina) — crisp on a modern Mac, vs soft standard-density at 80ppi.
+		Display:   bundle.Display{Width: 2560, Height: 1600, PPI: 220},
 	}
 	if err := b.Save(cfg); err != nil {
 		return nil, err

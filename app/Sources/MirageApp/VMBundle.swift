@@ -14,7 +14,9 @@ struct VMConfig: Decodable {
     let machineID: Data       // base64 in JSON → Data (VZMacMachineIdentifier)
     let display: Display
 
-    struct Display: Decodable { let width: Int; let height: Int }
+    struct Display: Decodable {
+        let width: Int; let height: Int; let ppi: Int?
+    }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"

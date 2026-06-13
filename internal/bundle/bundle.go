@@ -29,6 +29,10 @@ type Config struct {
 type Display struct {
 	Width  int64 `json:"width"`
 	Height int64 `json:"height"`
+	// PPI is the display's pixels-per-inch. A high value (e.g. 220) makes the
+	// guest treat it as a Retina/HiDPI display and render @2x — much crisper.
+	// Zero means the legacy default (80 ppi, standard density).
+	PPI int64 `json:"ppi,omitempty"`
 }
 
 // Bundle is a resolved on-disk bundle directory.
