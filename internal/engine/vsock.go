@@ -86,6 +86,14 @@ func agentExecOnce(vm *vz.VirtualMachine, command string, timeout time.Duration)
 	return res, nil, true
 }
 
+// SyncGuest flushes the guest filesystem so writes survive the force-stop that
+// ends a VM (vz Stop is an unclean power-off; unsynced writes are otherwise
+// lost — the file's metadata may persist while its contents do not). Best
+// effort: an unreachable agent simply means there is nothing to flush.
+func SyncGuest(vm *vz.VirtualMachine, timeout time.Duration) {
+	_, _ = AgentExec(vm, "sync", timeout)
+}
+
 // AgentScreenshot asks the guest agent for a PNG of the main display and
 // returns the decoded image bytes.
 func AgentScreenshot(vm *vz.VirtualMachine, timeout time.Duration) ([]byte, error) {

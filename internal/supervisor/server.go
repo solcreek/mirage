@@ -138,6 +138,9 @@ func (s *server) serve(ln net.Listener) error {
 
 func (s *server) shutdown() {
 	s.once.Do(func() {
+		// Flush guest writes before the force-stop (unclean power-off), so a
+		// session's writes to a persistent image are not lost.
+		engine.SyncGuest(s.vm, 5*time.Second)
 		_ = s.vm.Stop()
 		_ = engine.WaitState(s.vm, vz.VirtualMachineStateStopped, 30*time.Second)
 	})

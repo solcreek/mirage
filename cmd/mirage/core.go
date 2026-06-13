@@ -42,6 +42,9 @@ func coreExec(name, command string, timeout time.Duration) (exitCode int, output
 		return 0, "", miragerr.New(miragerr.SlugAgentTimeout, "guest agent not reachable").
 			WithHint("is mirage-agent installed in the image? run the tools-image install.sh once").WithCause(err)
 	}
+	// Flush the guest before the deferred force-stop, or writes this command
+	// made to a persistent image would be lost on power-off.
+	engine.SyncGuest(vm, 15*time.Second)
 	return res.ExitCode, res.Output, nil
 }
 
