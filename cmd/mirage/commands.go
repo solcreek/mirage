@@ -61,6 +61,7 @@ func (c *cmdContext) run(data any, err error) int {
 func cmdCreate(args []string) (any, error) {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
 	ipsw := fs.String("ipsw", "", "path to a macOS restore image (.ipsw)")
+	iso := fs.String("iso", "", "path to a Linux installer image (.iso) — creates a Linux guest")
 	diskGB := fs.Int64("disk-gb", 40, "disk size in GB (sparse)")
 	headless := fs.Bool("headless", false, "after install, run zero-touch prep (offline user+agent+TCC; needs sudo)")
 	pos, err := parseMixed(fs, args)
@@ -68,12 +69,15 @@ func cmdCreate(args []string) (any, error) {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
 	if len(pos) != 1 {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage create <name> --ipsw <path>")
-	}
-	if *ipsw == "" {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "--ipsw is required")
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage create <name> --ipsw <macos.ipsw> | --iso <linux.iso>")
 	}
 	name := pos[0]
+	if *iso != "" {
+		return createLinux(name, *iso, *diskGB)
+	}
+	if *ipsw == "" {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "--ipsw (macOS) or --iso (Linux) is required")
+	}
 	b := bundle.Resolve(bundle.Image, name)
 	if _, err := os.Stat(b.ConfigPath()); err == nil {
 		return nil, miragerr.New(miragerr.SlugConflict, "image "+name+" already exists")
@@ -105,6 +109,34 @@ func cmdCreate(args []string) (any, error) {
 		out["prepped"] = "headless"
 	}
 	return out, nil
+}
+
+// createLinux makes a Linux image: it provisions a blank disk + EFI store, then
+// boots the installer ISO in a window so the user installs the distro onto the
+// disk. Apple Silicon runs ARM64 guests only, so the ISO must be aarch64.
+func createLinux(name, iso string, diskGB int64) (any, error) {
+	if _, err := os.Stat(iso); err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "ISO not found: "+iso).
+			WithHint("the image must be an ARM64/aarch64 .iso (Apple Silicon runs ARM64 guests only)")
+	}
+	b := bundle.Resolve(bundle.Image, name)
+	if _, err := os.Stat(b.ConfigPath()); err == nil {
+		return nil, miragerr.New(miragerr.SlugConflict, "image "+name+" already exists")
+	}
+	cfg, err := engine.NewLinuxImage(b, diskGB, 4, 4096, bundle.Display{Width: 1920, Height: 1080})
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "booting the installer for %s — install to the disk, then shut down the guest / close the window\n", name)
+	vm, err := engine.BuildVM(b, cfg, engine.Options{ISO: iso})
+	if err != nil {
+		return nil, err
+	}
+	if err := engine.StartGUI(vm, "Mirage install: "+name, float64(cfg.Display.Width)/2, float64(cfg.Display.Height)/2, false); err != nil {
+		return nil, miragerr.New(miragerr.SlugHostEnv, "installer session failed").WithCause(err)
+	}
+	return map[string]any{"name": name, "os": "linux", "path": b.Dir,
+		"note": "boot the installed system with: mirage start " + name + " --gui"}, nil
 }
 
 // lsRow is one line of `mirage ls` output (package-level so the human renderer
@@ -164,6 +196,10 @@ func cmdStart(args []string) (any, error) {
 	if *restore && !b.HasSnapshot() {
 		return nil, miragerr.New(miragerr.SlugNotFound, "no snapshot for "+name).
 			WithHint("take one first: mirage snapshot " + name + " (while it is running)")
+	}
+	if cfg.OS == "linux" && !*gui && !*recovery {
+		return nil, miragerr.New(miragerr.SlugInvalidState, "Linux guests need a windowed session").
+			WithHint("boot it with: mirage start " + name + " --gui (headless agent for Linux is not yet supported)")
 	}
 	if !*gui && !*recovery {
 		// Headless: spawn a detached per-VM supervisor that keeps the VM

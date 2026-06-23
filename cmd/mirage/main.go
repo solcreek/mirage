@@ -20,7 +20,8 @@ const usage = `mirage — ephemeral macOS VMs on Apple Silicon
 usage: mirage [--json] <command> [args]
 
 commands:
-  create <name> --ipsw <path> [--headless]     install a macOS golden image
+  create <name> --ipsw <macos.ipsw> [--headless]   install a macOS golden image
+  create <name> --iso <linux.iso>              install a Linux guest (ARM64; windowed installer)
   prep <name>                                  zero-touch prep an installed image (sudo)
   ls                                           list images and VMs
   clone <src> <dst>                            instant copy-on-write clone

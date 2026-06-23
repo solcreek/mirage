@@ -36,14 +36,20 @@ type Options struct {
 	// attached as a second block device; the guest auto-mounts it under
 	// /Volumes. Used to deliver and install the guest agent.
 	ToolsImage string
+	// ISO, if set, is a read-only installer image (Linux guests) attached as a
+	// second block device so the VM can boot the distro installer.
+	ISO string
 }
 
 // BuildVM constructs a runnable VirtualMachine from a macOS bundle. The
 // configuration must be byte-identical across boots of the same bundle or
 // restore-from-save fails, so everything variable lives in config.json.
 func BuildVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualMachine, error) {
+	if c.OS == "linux" {
+		return buildLinuxVM(b, c, opts)
+	}
 	if c.OS != "macos" {
-		return nil, miragerr.New(miragerr.SlugInvalidState, "engine v0.1 supports macOS guests only")
+		return nil, miragerr.New(miragerr.SlugInvalidState, "unsupported guest OS: "+c.OS)
 	}
 	hw, err := vz.NewMacHardwareModelWithData(c.HardwareModel)
 	if err != nil {

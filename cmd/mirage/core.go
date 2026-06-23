@@ -35,6 +35,10 @@ func coreExec(name, command string, timeout time.Duration) (exitCode int, output
 	if err != nil {
 		return 0, "", err
 	}
+	if cfg.OS != "macos" {
+		return 0, "", miragerr.New(miragerr.SlugInvalidState, "exec requires a macOS guest (the guest agent is macOS-only)").
+			WithHint(name + " is a " + cfg.OS + " guest — boot it with: mirage start " + name + " --gui")
+	}
 	vm, err := engine.StartFresh(b, cfg, engine.Options{}, 5)
 	if err != nil {
 		return 0, "", miragerr.New(miragerr.SlugHostEnv, "vm start failed").
@@ -58,6 +62,10 @@ func coreRun(image, command string, timeout time.Duration) (name string, exitCod
 	src, _, ok := bundle.Find(image)
 	if !ok {
 		return "", 0, "", miragerr.New(miragerr.SlugNotFound, "no image named "+image)
+	}
+	if scfg, err := src.Load(); err == nil && scfg.OS != "macos" {
+		return "", 0, "", miragerr.New(miragerr.SlugInvalidState, "run requires a macOS guest (the guest agent is macOS-only)").
+			WithHint(image + " is a " + scfg.OS + " guest")
 	}
 	name = "run-" + randHex(5)
 	dst := bundle.Resolve(bundle.VM, name)
