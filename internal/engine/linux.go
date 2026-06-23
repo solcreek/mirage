@@ -74,24 +74,26 @@ func buildLinuxVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualM
 	gfx.SetScanouts(scanout)
 	cfg.SetGraphicsDevicesVirtualMachineConfiguration([]vz.GraphicsDeviceConfiguration{gfx})
 
-	natAttach, err := vz.NewNATNetworkDeviceAttachment()
-	if err != nil {
-		return nil, err
+	if !opts.NoNetwork {
+		natAttach, err := vz.NewNATNetworkDeviceAttachment()
+		if err != nil {
+			return nil, err
+		}
+		netDev, err := vz.NewVirtioNetworkDeviceConfiguration(natAttach)
+		if err != nil {
+			return nil, err
+		}
+		hwAddr, err := net.ParseMAC(c.MAC)
+		if err != nil {
+			return nil, miragerr.New(miragerr.SlugInvalidState, "bad MAC in config: "+c.MAC).WithCause(err)
+		}
+		macAddr, err := vz.NewMACAddress(hwAddr)
+		if err != nil {
+			return nil, err
+		}
+		netDev.SetMACAddress(macAddr)
+		cfg.SetNetworkDevicesVirtualMachineConfiguration([]*vz.VirtioNetworkDeviceConfiguration{netDev})
 	}
-	netDev, err := vz.NewVirtioNetworkDeviceConfiguration(natAttach)
-	if err != nil {
-		return nil, err
-	}
-	hwAddr, err := net.ParseMAC(c.MAC)
-	if err != nil {
-		return nil, miragerr.New(miragerr.SlugInvalidState, "bad MAC in config: "+c.MAC).WithCause(err)
-	}
-	macAddr, err := vz.NewMACAddress(hwAddr)
-	if err != nil {
-		return nil, err
-	}
-	netDev.SetMACAddress(macAddr)
-	cfg.SetNetworkDevicesVirtualMachineConfiguration([]*vz.VirtioNetworkDeviceConfiguration{netDev})
 
 	// Boot disk, plus the installer ISO (read-only) when creating an image.
 	bootAttach, err := vz.NewDiskImageStorageDeviceAttachment(b.DiskPath(), false)
@@ -103,9 +105,9 @@ func buildLinuxVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualM
 		return nil, err
 	}
 	storage := []vz.StorageDeviceConfiguration{bootBlk}
-	// Read-only extra disks: the installer ISO (create) and/or the tools image
-	// (agent install). Each appears in the guest as the next /dev/vd* device.
-	for _, ro := range []string{opts.ISO, opts.ToolsImage} {
+	// Read-only extra disks: the installer ISO (create), the cloud-init seed,
+	// and/or the tools image. Each appears in the guest as the next /dev/vd*.
+	for _, ro := range []string{opts.ISO, opts.Seed, opts.ToolsImage} {
 		if ro == "" {
 			continue
 		}
@@ -137,6 +139,14 @@ func buildLinuxVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualM
 		return nil, err
 	}
 	cfg.SetEntropyDevicesVirtualMachineConfiguration([]*vz.VirtioEntropyDeviceConfiguration{entropy})
+
+	// Virtio socket device: the host↔guest vsock channel the agent uses. Without
+	// it the host cannot reach the guest agent at all.
+	sockDev, err := vz.NewVirtioSocketDeviceConfiguration()
+	if err != nil {
+		return nil, err
+	}
+	cfg.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{sockDev})
 
 	if ok, err := cfg.Validate(); !ok || err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "Linux VM configuration is invalid").WithCause(err)

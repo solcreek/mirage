@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -127,8 +128,19 @@ func createLinux(name, iso string, diskGB int64) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A cloud-init NoCloud seed auto-fixes DNS in the live session (vmnet often
+	// hands the guest an unreachable host-LAN DNS, which breaks the installer's
+	// apt step) — so a first-time user can run the normal GUI installer with no
+	// terminal. Best-effort: if the seed can't be built, install proceeds without.
+	seed, cleanup, serr := buildDNSSeed()
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if serr != nil {
+		fmt.Fprintf(os.Stderr, "note: DNS seed unavailable (%v); fix DNS manually in the installer if apt fails\n", serr)
+	}
 	fmt.Fprintf(os.Stderr, "booting the installer for %s — install to the disk, then shut down the guest / close the window\n", name)
-	vm, err := engine.BuildVM(b, cfg, engine.Options{ISO: iso})
+	vm, err := engine.BuildVM(b, cfg, engine.Options{ISO: iso, Seed: seed})
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +149,46 @@ func createLinux(name, iso string, diskGB int64) (any, error) {
 	}
 	return map[string]any{"name": name, "os": "linux", "path": b.Dir,
 		"note": "boot the installed system with: mirage start " + name + " --gui"}, nil
+}
+
+// buildDNSSeed builds a tiny cloud-init NoCloud "cidata" ISO whose only job is
+// to set the guest DNS resolver to 1.1.1.1 in the live installer session, so apt
+// resolves despite the vmnet NAT handing an unreachable host-LAN DNS. It carries
+// NO autoinstall section, so the normal interactive installer runs unchanged —
+// the user just clicks through, no terminal. Returns the ISO path + a cleanup
+// func (cleanup may be non-nil even on error).
+func buildDNSSeed() (iso string, cleanup func(), err error) {
+	dir, err := os.MkdirTemp("", "mirage-seed")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	src := filepath.Join(dir, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		return "", cleanup, err
+	}
+	if err := os.WriteFile(filepath.Join(src, "meta-data"), []byte("instance-id: mirage-dns-seed\n"), 0o644); err != nil {
+		return "", cleanup, err
+	}
+	userData := "#cloud-config\n" +
+		"write_files:\n" +
+		"  - path: /etc/systemd/resolved.conf.d/99-mirage-dns.conf\n" +
+		"    content: |\n" +
+		"      [Resolve]\n" +
+		"      DNS=1.1.1.1 9.9.9.9\n" +
+		"runcmd:\n" +
+		"  - [systemctl, restart, systemd-resolved]\n"
+	if err := os.WriteFile(filepath.Join(src, "user-data"), []byte(userData), 0o644); err != nil {
+		return "", cleanup, err
+	}
+	iso = filepath.Join(dir, "cidata.iso")
+	// NoCloud detects a volume labeled "cidata" (case-insensitive).
+	out, e := exec.Command("hdiutil", "makehybrid", "-iso", "-joliet",
+		"-default-volume-name", "CIDATA", "-o", iso, src).CombinedOutput()
+	if e != nil {
+		return "", cleanup, miragerr.New(miragerr.SlugHostEnv, "build cidata seed: "+string(out)).WithCause(e)
+	}
+	return iso, cleanup, nil
 }
 
 // lsRow is one line of `mirage ls` output (package-level so the human renderer

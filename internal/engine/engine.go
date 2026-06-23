@@ -39,6 +39,15 @@ type Options struct {
 	// ISO, if set, is a read-only installer image (Linux guests) attached as a
 	// second block device so the VM can boot the distro installer.
 	ISO string
+	// NoNetwork omits the network device. Used for the Linux installer: with a
+	// NIC the installer sees the (NAT) link as "online" and tries to apt-download
+	// packages, which fails when vmnet hands the guest an unreachable DNS — and a
+	// failed download aborts the whole install. No NIC → a clean offline install.
+	NoNetwork bool
+	// Seed, if set, is a read-only cloud-init NoCloud "cidata" image attached
+	// during a Linux install so the live session auto-fixes DNS (working around
+	// the vmnet NAT DNS quirk) before the user runs the interactive installer.
+	Seed string
 }
 
 // BuildVM constructs a runnable VirtualMachine from a macOS bundle. The
