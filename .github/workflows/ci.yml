@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    # Apple Silicon macOS runner: the engine links Virtualization.framework via
+    # cgo and the vz bindings are arm64-only, so this can't build on Linux/Intel.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: build + ad-hoc sign the CLI
+        run: make build
+
+      - name: swift build (SwiftUI app)
+        run: swift build --package-path app

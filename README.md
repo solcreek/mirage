@@ -1,5 +1,7 @@
 # Mirage
 
+[![CI](https://github.com/solcreek/mirage/actions/workflows/ci.yml/badge.svg)](https://github.com/solcreek/mirage/actions/workflows/ci.yml)
+
 Ephemeral macOS virtual machines on Apple Silicon — **agent-native** and
 **CLI-first**, with an [MCP](https://modelcontextprotocol.io) server and a native
 SwiftUI app. Built on Apple's Virtualization.framework.
