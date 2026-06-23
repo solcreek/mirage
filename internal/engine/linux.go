@@ -103,16 +103,21 @@ func buildLinuxVM(b bundle.Bundle, c *bundle.Config, opts Options) (*vz.VirtualM
 		return nil, err
 	}
 	storage := []vz.StorageDeviceConfiguration{bootBlk}
-	if opts.ISO != "" {
-		isoAttach, err := vz.NewDiskImageStorageDeviceAttachment(opts.ISO, true) // read-only
+	// Read-only extra disks: the installer ISO (create) and/or the tools image
+	// (agent install). Each appears in the guest as the next /dev/vd* device.
+	for _, ro := range []string{opts.ISO, opts.ToolsImage} {
+		if ro == "" {
+			continue
+		}
+		att, err := vz.NewDiskImageStorageDeviceAttachment(ro, true)
 		if err != nil {
 			return nil, err
 		}
-		isoBlk, err := vz.NewVirtioBlockDeviceConfiguration(isoAttach)
+		blk, err := vz.NewVirtioBlockDeviceConfiguration(att)
 		if err != nil {
 			return nil, err
 		}
-		storage = append(storage, isoBlk)
+		storage = append(storage, blk)
 	}
 	cfg.SetStorageDevicesVirtualMachineConfiguration(storage)
 

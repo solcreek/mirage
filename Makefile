@@ -1,6 +1,6 @@
 BIN := bin/mirage
 
-.PHONY: build tools-image test vet clean
+.PHONY: build tools-image linux-tools test vet clean
 
 build:
 	@mkdir -p bin
@@ -10,6 +10,10 @@ build:
 # Build the guest agent tools image (auto-mounts in the guest as /Volumes/MirageTools).
 tools-image:
 	./scripts/build-tools-image.sh
+
+# Build the Linux guest tools image (ISO9660 with the arm64 agent + installer).
+linux-tools:
+	./scripts/build-linux-tools.sh
 
 test:
 	go test ./...

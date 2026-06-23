@@ -176,13 +176,14 @@ func cmdStart(args []string) (any, error) {
 	recovery := fs.Bool("recovery", false, "boot into recoveryOS (implies --gui; for toggling SIP)")
 	restore := fs.Bool("restore", false, "restore the warm snapshot instead of cold-booting (headless)")
 	share := fs.String("share", "", "host directory to expose to the guest over VirtioFS (tag \"mirage\")")
-	tools := fs.String("tools", "", "attach a read-only tools image (auto-mounts in the guest)")
+	tools := fs.String("tools", "", "attach a read-only tools image (mounts in the guest)")
+	dns := fs.String("dns", "", "override the guest DNS resolver, persistently (Linux), e.g. --dns \"1.1.1.1 9.9.9.9\"")
 	pos, err := parseMixed(fs, args)
 	if err != nil {
 		return nil, miragerr.New(miragerr.SlugHostEnv, "bad flags")
 	}
 	if len(pos) != 1 {
-		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> [--restore] [--gui] [--share <dir>] [--tools <img>]")
+		return nil, miragerr.New(miragerr.SlugHostEnv, "usage: mirage start <name> [--restore] [--gui] [--dns <servers>] [--share <dir>] [--tools <img>]")
 	}
 	name := pos[0]
 	b, _, ok := bundle.Find(name)
@@ -197,18 +198,28 @@ func cmdStart(args []string) (any, error) {
 		return nil, miragerr.New(miragerr.SlugNotFound, "no snapshot for "+name).
 			WithHint("take one first: mirage snapshot " + name + " (while it is running)")
 	}
-	if cfg.OS == "linux" && !*gui && !*recovery {
-		return nil, miragerr.New(miragerr.SlugInvalidState, "Linux guests need a windowed session").
-			WithHint("boot it with: mirage start " + name + " --gui (headless agent for Linux is not yet supported)")
-	}
 	if !*gui && !*recovery {
 		// Headless: spawn a detached per-VM supervisor that keeps the VM
-		// running and serves its socket for fast exec.
+		// running and serves its socket for fast exec. (Linux works too, once
+		// the guest agent is installed via --tools; otherwise the agent wait
+		// times out with a hint.)
 		status, pid, err := startHeadless(name, *restore)
 		if err != nil {
 			return nil, err
 		}
+		if *dns != "" { // apply persistent DNS on the now-running guest
+			if err := coreSetDNS(name, *dns, 2*time.Minute); err != nil {
+				return nil, err
+			}
+		}
 		return map[string]any{"name": name, "status": status, "pid": pid, "restored": *restore}, nil
+	}
+	// GUI/recovery: DNS is persistent, so set it first (one-shot) — the windowed
+	// boot then inherits it.
+	if *dns != "" {
+		if err := coreSetDNS(name, *dns, 2*time.Minute); err != nil {
+			return nil, err
+		}
 	}
 	// A GUI/recovery boot needs exclusive access to the disk; a running
 	// supervisor holds it (otherwise vz fails cryptically locking aux storage).

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/solcreek/mirage/internal/bundle"
@@ -35,10 +36,6 @@ func coreExec(name, command string, timeout time.Duration) (exitCode int, output
 	if err != nil {
 		return 0, "", err
 	}
-	if cfg.OS != "macos" {
-		return 0, "", miragerr.New(miragerr.SlugInvalidState, "exec requires a macOS guest (the guest agent is macOS-only)").
-			WithHint(name + " is a " + cfg.OS + " guest — boot it with: mirage start " + name + " --gui")
-	}
 	vm, err := engine.StartFresh(b, cfg, engine.Options{}, 5)
 	if err != nil {
 		return 0, "", miragerr.New(miragerr.SlugHostEnv, "vm start failed").
@@ -62,10 +59,6 @@ func coreRun(image, command string, timeout time.Duration) (name string, exitCod
 	src, _, ok := bundle.Find(image)
 	if !ok {
 		return "", 0, "", miragerr.New(miragerr.SlugNotFound, "no image named "+image)
-	}
-	if scfg, err := src.Load(); err == nil && scfg.OS != "macos" {
-		return "", 0, "", miragerr.New(miragerr.SlugInvalidState, "run requires a macOS guest (the guest agent is macOS-only)").
-			WithHint(image + " is a " + scfg.OS + " guest")
 	}
 	name = "run-" + randHex(5)
 	dst := bundle.Resolve(bundle.VM, name)
@@ -196,6 +189,29 @@ func coreAutologin(name, user, password string, timeout time.Duration) error {
 		return miragerr.New(miragerr.SlugInvalidState,
 			"enabling auto-login failed in "+name+": "+out).
 			WithHint("the guest agent runs as root; check the user name exists in the guest")
+	}
+	return nil
+}
+
+// coreSetDNS persistently overrides a Linux guest's DNS resolver via the guest
+// agent, working around vmnet NAT advertising a host-LAN DNS server the guest
+// can't reach. It writes a systemd-resolved drop-in (inherited by clones) and
+// restarts the resolver. Requires the guest agent (mirage start --tools install).
+func coreSetDNS(name, servers string, timeout time.Duration) error {
+	if strings.TrimSpace(servers) == "" {
+		return miragerr.New(miragerr.SlugInvalidState, "no DNS servers given")
+	}
+	// One root command via the agent: write the drop-in, restart the resolver,
+	// flush so it survives the force-stop.
+	cmd := "mkdir -p /etc/systemd/resolved.conf.d && " +
+		"printf '[Resolve]\\nDNS=" + servers + "\\n' > /etc/systemd/resolved.conf.d/mirage.conf && " +
+		"(systemctl restart systemd-resolved 2>/dev/null || true) && sync"
+	code, out, err := coreExec(name, cmd, timeout)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return miragerr.New(miragerr.SlugInvalidState, "setting DNS failed in "+name+": "+out)
 	}
 	return nil
 }

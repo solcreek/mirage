@@ -30,7 +30,7 @@ commands:
   screenshot <name> [-o out.png]               capture the guest display (PNG)
   autologin <name> [user]                      enable boot-to-desktop (password on stdin)
   snapshot <name> [--discard]                  freeze a warm restore point of a running VM
-  start <name> [--restore] [--gui]             boot a VM (headless/restore, or windowed)
+  start <name> [--restore] [--gui] [--dns <s>] boot a VM (headless/restore, or windowed)
   stop <name>                                  stop a running VM
   logs <name>                                  print a VM's supervisor log
   rm <name>                                    delete a bundle

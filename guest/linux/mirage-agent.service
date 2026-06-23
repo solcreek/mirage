@@ -1,0 +1,12 @@
+[Unit]
+Description=Mirage guest agent (vsock control channel)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mirage-agent
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
